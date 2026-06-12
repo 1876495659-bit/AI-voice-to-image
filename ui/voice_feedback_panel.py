@@ -197,6 +197,13 @@ class VoiceFeedbackPanel(QWidget):
         self._fade_timer.stop()
         self._fade_timer.start(3000)
 
+    def show_partial_transcription(self, text: str) -> None:
+        """逐字展示正在输出的识别文本。"""
+        self._last_text = text.strip()
+        self.text_label.setText(text)
+        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
+        self.action_label.setText("→ 正在识别...")
+
     def show_action(self, action_text: str) -> None:
         self.action_label.setText(f"→ {action_text}")
 

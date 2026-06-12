@@ -175,6 +175,9 @@ class MainWindow(QMainWindow):
         self.voice_service.signals.transcription_ready.connect(
             self._on_transcription_ready
         )
+        self.voice_service.signals.partial_transcription.connect(
+            self.voice_panel.show_partial_transcription
+        )
         self.voice_service.signals.listening_started.connect(
             self._on_listening_started
         )

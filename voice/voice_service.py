@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 class VoiceServiceSignals(QObject):
     """语音服务信号。"""
 
+    partial_transcription = pyqtSignal(str)
     transcription_ready = pyqtSignal(str, float)
     listening_started = pyqtSignal()
     listening_stopped = pyqtSignal()
@@ -60,6 +61,7 @@ class VoiceService(QObject):
         # 防抖: 两次识别之间保留短间隔，避免吞掉连续语音指令
         self._last_transcribe_time = 0.0
         self._COOLDOWN = 0.35
+        self._stream_char_interval = 0.025
         self._transcribe_lock = threading.Lock()
         self._is_transcribing = False
         self._pending_audio: Optional[np.ndarray] = None
@@ -147,6 +149,7 @@ class VoiceService(QObject):
             if text:
                 self._last_transcribe_time = time.monotonic()
                 logger.info("识别: \"%s\" (置信度: %.2f)", text, confidence)
+                self._emit_partial_transcription(text)
                 self.signals.transcription_ready.emit(text, confidence)
             else:
                 logger.debug("未识别到语音 (trimmed: %.2fs)", len(audio) / 16000)
@@ -164,6 +167,15 @@ class VoiceService(QObject):
 
             if next_audio is not None:
                 self._transcribe_worker(next_audio)
+
+    def _emit_partial_transcription(self, text: str) -> None:
+        """逐字发出识别文本前缀，供界面实时展示。"""
+        current = ""
+        for char in text:
+            current += char
+            self.signals.partial_transcription.emit(current)
+            if self._stream_char_interval > 0:
+                time.sleep(self._stream_char_interval)
 
     def _transcribe(self, audio: np.ndarray) -> tuple[str, float]:
         """使用主模型识别，置信度低时回退。
