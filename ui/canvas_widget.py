@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QBrush,
@@ -17,7 +17,6 @@ from PyQt6.QtGui import (
     QPolygon,
     QPainter,
     QPixmap,
-    QTransform,
 )
 from PyQt6.QtWidgets import QWidget
 
@@ -167,13 +166,13 @@ class CanvasWidget(QWidget):
 
         painter.setPen(QPen(pen_color, pen_width,
                             Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.Round,
-                            Qt.PenJoinStyle.Round))
+                            Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
         painter.setBrush(QBrush(pen_color))
 
         draw_method = self._draw_handlers.get(op.op_type)
         if draw_method is not None:
-            draw_method(painter, op)
+            draw_method(self, painter, op)
 
     def _draw_freehand(self, painter: QPainter, op: FreehandOperation) -> None:
         if not op.points or len(op.points) < 2:
@@ -195,7 +194,7 @@ class CanvasWidget(QWidget):
                             int(op.radius * 2), int(op.radius * 2))
 
     def _draw_triangle(self, painter: QPainter, op: TriangleOperation) -> None:
-        polygon = QPolygon([op.p1, op.p2, op.p3])
+        polygon = QPolygon([QPoint(*op.p1), QPoint(*op.p2), QPoint(*op.p3)])
         painter.drawPolygon(polygon)
 
     def _draw_star(self, painter: QPainter, op: StarOperation) -> None:
