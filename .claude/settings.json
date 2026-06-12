@@ -8,7 +8,21 @@
       "Bash(git init *)",
       "Bash(git branch *)",
       "Bash(git remote *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m '初始化项目结构：目录框架、依赖配置、README *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git rebase *)",
+      "Bash(EDITOR=true git rebase --continue)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(git commit -m 'feat\\(engine\\): 绘图操作数据模型 engine/operations.py *)",
+      "Bash(git commit -m 'feat\\(engine\\): 栈式撤销/重做历史管理 engine/undo_history.py *)",
+      "Bash(git commit -m 'feat\\(engine\\): 绘图执行引擎 engine/drawing_engine.py *)",
+      "Bash(git commit -m 'feat\\(ui\\): 画布渲染组件 ui/canvas_widget.py *)",
+      "Bash(git commit -m 'feat\\(parser\\): 颜色映射表 parser/color_map.py *)",
+      "Bash(git commit -m 'feat\\(parser\\): 命令语法规则 parser/command_grammar.py *)"
     ]
   }
 }

@@ -1,11 +1,5 @@
 """AI 语音绘图工具 - 应用入口。
 
-启动流程:
-1. 创建 PyQt6 应用
-2. 初始化 MainWindow（含 DrawingEngine / VoiceService / Canvas / UI）
-3. 加载 Whisper 语音模型
-4. 显示主窗口，进入事件循环
-
 用法:
     python main.py
 
@@ -15,13 +9,7 @@
 
 import logging
 import sys
-
-# 必须在 import PyQt6 之前设置
-import os
-os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "Lib", "site-packages", "PyQt6", "Qt6", "plugins"
-)
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -38,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     """应用入口。"""
+    # 定位 PyQt6.Qt6.plugins 目录
+    try:
+        import PyQt6
+        plugin_path = str(Path(PyQt6.__file__).parent / "Qt6" / "plugins")
+        import os
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
+    except Exception:
+        pass
+
     # Qt 应用高 DPI 缩放支持
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -57,9 +54,12 @@ def main() -> None:
         window.voice_panel.show_error("语音识别不可用，请检查 whisper 安装")
 
     window.show()
+    logger.info("窗口已显示，进入事件循环...")
 
     # 进入事件循环
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    logger.info(f"应用退出，代码: {exit_code}")
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

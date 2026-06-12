@@ -1,0 +1,4 @@
+Microsoft Windows [Version 10.0.26100.7623]
+(c) Microsoft Corporation。保留所有权利。
+
+C:\Users\DJ\Desktop\git\AI-voice-to-image>
