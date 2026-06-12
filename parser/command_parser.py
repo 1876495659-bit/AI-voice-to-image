@@ -230,6 +230,10 @@ class CommandParser:
         size = match_size(text)
         if size is not None:
             slots["size"] = size
+        else:
+            radius = self._extract_radius_hint(text)
+            if radius is not None:
+                slots["radius"] = radius
 
         color_name = match_color(text)
         if color_name:
@@ -239,6 +243,8 @@ class CommandParser:
         shape = match_shape(text)
         if shape:
             slots["shape"] = shape
+
+        slots["filled"] = self._extract_fill_style(text)
 
         return slots
 
@@ -310,6 +316,7 @@ class CommandParser:
         shape = slots.get("shape")
         color = slots.get("color_hex", "#000000")
         size = slots.get("size", 3)
+        filled = slots.get("filled", True)
 
         if not shape:
             return []
@@ -318,26 +325,39 @@ class CommandParser:
         position = self._extract_position(text)
 
         if shape == "circle":
-            center = position if position else (self.canvas_width // 2, self.canvas_height // 2)
-            return [CircleOperation(color=color, size=size, center=center, radius=60.0)]
+            radius = float(slots.get("radius", 60))
+            center = self._fit_center(
+                position if position else (self.canvas_width // 2, self.canvas_height // 2),
+                radius,
+                radius,
+            )
+            return [CircleOperation(color=color, size=size, filled=filled, center=center, radius=radius)]
 
         elif shape == "rectangle":
-            center = position if position else (self.canvas_width // 2, self.canvas_height // 2)
-            tl = (center[0] - 50, center[1] - 40)
-            br = (center[0] + 50, center[1] + 40)
-            return [RectangleOperation(color=color, size=size, top_left=tl, bottom_right=br)]
+            half_w, half_h = self._extract_rect_size_hint(text)
+            center = self._fit_center(
+                position if position else (self.canvas_width // 2, self.canvas_height // 2),
+                half_w,
+                half_h,
+            )
+            tl = (center[0] - half_w, center[1] - half_h)
+            br = (center[0] + half_w, center[1] + half_h)
+            return [RectangleOperation(color=color, size=size, filled=filled, top_left=tl, bottom_right=br)]
 
         elif shape == "triangle":
             center = position if position else (self.canvas_width // 2, self.canvas_height // 2)
-            s = 60
+            s = int(slots.get("radius", 60))
+            center = self._fit_center(center, s, s)
             p1 = (center[0], center[1] - s)
             p2 = (center[0] - s, center[1] + s // 2)
             p3 = (center[0] + s, center[1] + s // 2)
-            return [TriangleOperation(color=color, size=size, p1=p1, p2=p2, p3=p3)]
+            return [TriangleOperation(color=color, size=size, filled=filled, p1=p1, p2=p2, p3=p3)]
 
         elif shape == "star":
             center = position if position else (self.canvas_width // 2, self.canvas_height // 2)
-            return [StarOperation(color=color, size=size, center=center, outer_radius=60.0, inner_radius=24.0)]
+            radius = float(slots.get("radius", 60))
+            center = self._fit_center(center, radius, radius)
+            return [StarOperation(color=color, size=size, filled=filled, center=center, outer_radius=radius, inner_radius=radius * 0.4)]
 
         elif shape == "line_draw":
             # 直线：默认中心到右下
@@ -380,15 +400,19 @@ class CommandParser:
             "正中": (self.canvas_width // 2, self.canvas_height // 2),
             "当中": (self.canvas_width // 2, self.canvas_height // 2),
             "top_left": (40, 40),
+            "左上角": (40, 40),
             "左上": (40, 40),
             "顶左": (40, 40),
             "top_right": (self.canvas_width - 40, 40),
+            "右上角": (self.canvas_width - 40, 40),
             "右上": (self.canvas_width - 40, 40),
             "顶右": (self.canvas_width - 40, 40),
             "bottom_left": (40, self.canvas_height - 40),
+            "左下角": (40, self.canvas_height - 40),
             "左下": (40, self.canvas_height - 40),
             "底左": (40, self.canvas_height - 40),
             "bottom_right": (self.canvas_width - 40, self.canvas_height - 40),
+            "右下角": (self.canvas_width - 40, self.canvas_height - 40),
             "右下": (self.canvas_width - 40, self.canvas_height - 40),
             "底右": (self.canvas_width - 40, self.canvas_height - 40),
             "mid_top": (self.canvas_width // 2, 40),
@@ -409,6 +433,36 @@ class CommandParser:
             if key in text:
                 return coord
         return None
+
+    def _extract_fill_style(self, text: str) -> bool:
+        """提取空心/实心语义。"""
+        if any(word in text for word in ("空心", "不填充", "无填充", "轮廓", "描边")):
+            return False
+        return True
+
+    def _extract_radius_hint(self, text: str) -> Optional[int]:
+        """从大小描述中推断形状半径。"""
+        if any(word in text for word in ("很大", "超大", "巨大")):
+            return 110
+        if any(word in text for word in ("大一点", "大圆", "大的", "大号", "大")):
+            return 90
+        if any(word in text for word in ("很小", "小一点", "小圆", "小的", "小号", "小")):
+            return 36
+        return None
+
+    def _extract_rect_size_hint(self, text: str) -> tuple[int, int]:
+        """从大小描述中推断矩形半宽高。"""
+        radius = self._extract_radius_hint(text)
+        if radius is None:
+            return 50, 40
+        return radius, max(30, int(radius * 0.75))
+
+    def _fit_center(self, center: tuple, half_w: float, half_h: float) -> tuple:
+        """将中心点夹在画布内，避免边角形状被裁切。"""
+        x, y = center
+        x = max(int(half_w), min(self.canvas_width - int(half_w), int(x)))
+        y = max(int(half_h), min(self.canvas_height - int(half_h), int(y)))
+        return x, y
 
     def _extract_prompt(self, text: str) -> str:
         """从 AI 生成命令中提取提示词。

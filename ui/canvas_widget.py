@@ -168,7 +168,10 @@ class CanvasWidget(QWidget):
                             Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap,
                             Qt.PenJoinStyle.RoundJoin))
-        painter.setBrush(QBrush(pen_color))
+        if op.filled and op.op_type not in (OperationType.FREEHAND, OperationType.LINE_DRAW):
+            painter.setBrush(QBrush(pen_color))
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
 
         draw_method = self._draw_handlers.get(op.op_type)
         if draw_method is not None:

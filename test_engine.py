@@ -98,7 +98,7 @@ for text, expected_type, expected_ops in tests:
     op_names = [o.op_type.name for o in r.operations]
     assert op_names == expected_ops, f'FAIL: "{text}" ops={op_names} expected={expected_ops}'
     print(f"  OK: \"{text}\" -> {op_names}")
-print("[3] 命令解析 13/13 OK")
+print(f"[3] 命令解析 {len(tests)}/{len(tests)} OK")
 
 # ── 3. 颜色映射测试 ──────────────────────────
 from parser import color_map

@@ -82,6 +82,7 @@ class DrawingOperation:
     op_type: OperationType = OperationType.PEN
     color: str = "#000000"
     size: int = 3
+    filled: bool = True
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DrawingOperation):

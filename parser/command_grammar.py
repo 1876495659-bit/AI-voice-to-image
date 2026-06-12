@@ -44,19 +44,19 @@ SIZE_PATTERN: Pattern[str] = re.compile(
 # 形状绘制
 SHAPE_PATTERNS: Dict[str, Pattern[str]] = {
     "circle": re.compile(
-        r"画(?:[一二三四五六][个只]?|[个只]|[一个二三四五六])?[的]?(圆|圆形|圈圈|圆圈)[^(（]*$", re.IGNORECASE
+        r"画[^(（]*(圆|圆形|圈圈|圆圈)[^(（]*$", re.IGNORECASE
     ),
     "rectangle": re.compile(
-        r"画(?:[一二三四五六][个只]?|[个只]|[一个二三四五六])?[的]?(矩形|方形|正方|长方形|方框|框)[^(（]*$", re.IGNORECASE
+        r"画[^(（]*(矩形|方形|正方|长方形|方框|框)[^(（]*$", re.IGNORECASE
     ),
     "triangle": re.compile(
-        r"画(?:[一二三四五六][个只]?|[个只]|[一个二三四五六])?[的]?(三角|三角形)[^(（]*$", re.IGNORECASE
+        r"画[^(（]*(三角|三角形)[^(（]*$", re.IGNORECASE
     ),
     "star": re.compile(
-        r"画(?:[一二三四五六][个只]?|[个只]|[一个二三四五六])?[的]?(星|星星|五角星)[^(（]*$", re.IGNORECASE
+        r"画[^(（]*(星|星星|五角星)[^(（]*$", re.IGNORECASE
     ),
     "line_draw": re.compile(
-        r"画(?:[一条一]?[条根道]|[一二三四五六]条|[个只])?[的]?(线|直线)[^(（]*$", re.IGNORECASE
+        r"画[^(（]*(线|直线)[^(（]*$", re.IGNORECASE
     ),
     "freehand": re.compile(
         r"(画[个只]?[的])?随便?[线線]?(条)?[^(（]*$",
