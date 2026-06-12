@@ -1,17 +1,15 @@
-"""语音识别反馈面板。
+"""语音反馈面板 — 美化版。
 
-大字显示识别到的语音文字 + 置信度进度条 + 解析动作确认。
-
-引用:
-- `voice/voice_service.py` — VoiceService.signals.transcription_ready 信号
+大字显示识别到的语音文字 + 渐变置信度条 + 解析动作。
+深色主题 + 渐变背景 + 动画淡出效果。
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation
+from PyQt6.QtGui import QFont, QLinearGradient, QColor
 from PyQt6.QtWidgets import (
     QLabel,
     QProgressBar,
@@ -21,14 +19,13 @@ from PyQt6.QtWidgets import (
 
 
 class VoiceFeedbackPanel(QWidget):
-    """语音反馈面板。
+    """美化版语音反馈面板。"""
 
-    位于窗口顶部，提供实时语音识别反馈：
-    1. 大字显示识别到的语音文字
-    2. 置信度进度条（绿/黄/红）
-    3. 解析动作确认（显示引擎将执行的操作）
-
-    4 秒后自动淡出语音文字（避免屏幕堆积）。
+    _BG = """
+        QWidget {
+            background-color: #2A2A3C;
+            border-radius: 12px;
+        }
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -38,131 +35,112 @@ class VoiceFeedbackPanel(QWidget):
         self._reset_timeout = QTimer(self)
         self._reset_timeout.setSingleShot(True)
         self._reset_timeout.timeout.connect(self._reset_text)
+        self._fade_timer = QTimer(self)
+        self._fade_timer.setSingleShot(True)
+        self._fade_timer.timeout.connect(self._fade_out)
 
     def _setup_ui(self) -> None:
-        """初始化 UI。"""
-        layout = QVBoxLayout()
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(8)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 12, 20, 12)
+        layout.setSpacing(10)
 
-        # --- 识别文字 ---
+        # 识别文字 — 大字渐变
         self.text_label = QLabel("请说话...")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = QFont("Microsoft YaHei", 22)
-        font.setBold(True)
+        font = QFont("Microsoft YaHei", 26, QFont.Weight.Bold)
         self.text_label.setFont(font)
-        self.text_label.setStyleSheet("color: #333333;")
+        self.text_label.setStyleSheet("""
+            color: #EAEAEA;
+            min-height: 36px;
+        """)
         layout.addWidget(self.text_label)
 
-        # --- 置信度进度条 ---
+        # 置信度进度条 — 渐变填充
         self.confidence_bar = QProgressBar()
         self.confidence_bar.setRange(0, 100)
         self.confidence_bar.setValue(0)
         self.confidence_bar.setTextVisible(False)
-        self.confidence_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #CCCCCC;
-                border-radius: 6px;
-                background: #F0F0F0;
-                height: 14px;
-            }
-            QProgressBar::chunk {
-                background: #00AA00;
-                border-radius: 4px;
-            }
-        """)
+        self.confidence_bar.setFixedHeight(10)
+        self.confidence_bar.setStyleSheet(self._progress_style("#00AA00"))
         layout.addWidget(self.confidence_bar)
 
-        # --- 解析动作 ---
+        # 解析动作
         self.action_label = QLabel("")
-        self.action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font2 = QFont("Microsoft YaHei", 14)
-        font2.setBold(False)
+        font2 = QFont("Microsoft YaHei", 13)
         self.action_label.setFont(font2)
-        self.action_label.setStyleSheet("color: #666666; min-height: 20px;")
+        self.action_label.setStyleSheet("color: #AAAAAA; min-height: 20px;")
+        self.action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.action_label)
 
-        self.setLayout(layout)
+        self.setStyleSheet(self._BG)
 
-        # 背景色
-        self.setStyleSheet("background-color: #FAFAFA; border-radius: 8px;")
+    # ── 进度条样式 ──────────────────────────────────────────
 
-    # --- 公共 API ---
+    def _progress_style(self, color: str) -> str:
+        return f"""
+            QProgressBar {{
+                background-color: #1a1a2a;
+                border: none;
+                border-radius: 5px;
+                height: 10px;
+            }}
+            QProgressBar::chunk {{
+                background: QLinearGradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 {color},
+                    stop: 1 {color}cc
+                );
+                border-radius: 5px;
+            }}
+        """
+
+    # ── 公共 API ──────────────────────────────────────────
 
     def show_transcription(self, text: str, confidence: float) -> None:
-        """显示识别结果。
-
-        Args:
-            text: 识别到的语音文本。
-            confidence: 置信度 (0-1)。
-        """
-        # 更新文字
         self.text_label.setText(text)
-        self.text_label.setStyleSheet("color: #333333;")
+        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
 
-        # 更新置信度条
         pct = int(confidence * 100)
         self.confidence_bar.setValue(pct)
 
-        # 置信度颜色
         if confidence >= 0.8:
-            color = "#00AA00"  # 绿色
+            color = "#4ADE80"   # 绿色
         elif confidence >= 0.6:
-            color = "#FFAA00"  # 黄色
+            color = "#FBBF24"   # 黄色
         else:
-            color = "#FF4444"  # 红色
-        self.confidence_bar.setStyleSheet(f"""
-            QProgressBar {{
-                border: 2px solid #CCCCCC;
-                border-radius: 6px;
-                background: #F0F0F0;
-                height: 14px;
-            }}
-            QProgressBar::chunk {{
-                background: {color};
-                border-radius: 4px;
-            }}
-        """)
+            color = "#F87171"   # 红色
+        self.confidence_bar.setStyleSheet(self._progress_style(color))
 
-        # 4 秒后自动重置文字
-        self._reset_timeout.stop()
-        self._reset_timeout.start(4000)
+        # 显示动作
+        self._fade_timer.stop()
+        self._fade_timer.start(3000)
 
     def show_action(self, action_text: str) -> None:
-        """显示解析的动作确认。
-
-        Args:
-            action_text: 动作描述文本。
-        """
         self.action_label.setText(f"→ {action_text}")
 
     def show_error(self, error_text: str) -> None:
-        """显示错误提示。
-
-        Args:
-            error_text: 错误信息。
-        """
         self.text_label.setText("请再说一遍")
-        self.text_label.setStyleSheet("color: #FF4444;")
+        self.text_label.setStyleSheet("color: #F87171; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText(f"→ {error_text}")
 
     def show_listening(self) -> None:
-        """显示正在监听。"""
         self.text_label.setText("请说话...")
-        self.text_label.setStyleSheet("color: #333333;")
+        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
 
     def show_silence(self) -> None:
-        """显示未监听。"""
         self.text_label.setText("麦克风未连接")
-        self.text_label.setStyleSheet("color: #999999;")
+        self.text_label.setStyleSheet("color: #777777; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
 
     def _reset_text(self) -> None:
-        """重置文字（定时器触发）。"""
         self.text_label.setText("")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+
+    def _fade_out(self) -> None:
+        """渐变淡出效果."""
+        self.action_label.clear()

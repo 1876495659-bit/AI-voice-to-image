@@ -1,6 +1,5 @@
 # GUI
 pyqt6>=6.6
-pyqt6-plugins
 
 # Voice Recognition
 openai-whisper>=20231117

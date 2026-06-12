@@ -1,66 +1,85 @@
-"""主窗口组装。
+"""主窗口组装 — 美化版。
 
-将所有 UI 组件组装为完整应用窗口：
-顶部 = 语音反馈面板
-中间 = 画布 + 状态栏
-底部 = 命令历史面板
-
-纯视觉展示界面，无按钮/菜单。
+新增可交互按钮：
+- 左侧工具栏：工具按钮（笔/橡皮/线条/画圆/画矩形/画三角形/画星/清空/撤销）
+- 底部颜色面板：30+ 颜色色块可点击选择
+- 画布缩放滑块 + 导航控制
+- 整体深色风格 + 圆角卡片布局
 
 引用:
-- `ui/canvas_widget.py` — CanvasWidget 画布
-- `ui/status_bar.py` — StatusBar 状态栏
-- `ui/voice_feedback_panel.py` — VoiceFeedbackPanel 语音反馈
-- `ui/command_history_panel.py` — CommandHistoryPanel 命令历史
 - `engine/drawing_engine.py` — DrawingEngine 绘图引擎
 - `voice/voice_service.py` — VoiceService 语音服务
 - `parser/command_parser.py` — CommandParser 命令解析
+- `parser/color_map.py` — 颜色映射表（获取颜色名列表）
+- `ui/canvas_widget.py` — CanvasWidget 画布
+- `ui/voice_feedback_panel.py` — VoiceFeedbackPanel 语音反馈
+- `ui/command_history_panel.py` — CommandHistoryPanel 命令历史
+- `engine/operations.py` — 操作类
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import math
+from typing import Dict, List, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPointF
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QPalette,
+    QLinearGradient,
+)
 from PyQt6.QtWidgets import (
-    QDockWidget,
+    QApplication,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
+    QScrollArea,
+    QSlider,
     QSplitter,
+    QVBoxLayout,
     QWidget,
 )
 
 import config
 from engine.drawing_engine import DrawingEngine
-from parser.command_parser import CommandParser, ParseResultType
+from parser import color_map
+from parser.command_parser import CommandParser
 from ui.canvas_widget import CanvasWidget
 from ui.command_history_panel import CommandHistoryPanel
-from ui.status_bar import StatusBar
 from ui.voice_feedback_panel import VoiceFeedbackPanel
 from voice.voice_service import VoiceService
 
+# ── 工具栏颜色 ───────────────────────────────────────────────
+BG_DARK = "#1E1E2E"
+BG_CARD = "#2A2A3C"
+BG_HOVER = "#3A3A50"
+ACCENT = "#6C63FF"
+ACCENT_PRESSED = "#5544CC"
+TEXT_PRIMARY = "#EAEAEA"
+TEXT_SECONDARY = "#AAAAAA"
+TEXT_DIM = "#777777"
+BORDER_LIGHT = "#3A3A4C"
+
 
 class MainWindow(QMainWindow):
-    """主窗口。纯语音控制，无按钮/菜单。
+    """主窗口 — 深色主题 + 工具栏 + 颜色面板 + 画布缩放。
 
-    布局:
-        ┌──────────────────────────────────┐
-        │      VoiceFeedbackPanel          │  ← 顶部
-        ├──────────────────────────────────┤
-        │                                  │
-        │      CanvasWidget                │  ← 中间（约 80% 高度）
-        │                                  │
-        ├──────────────────────────────────┤
-        │      StatusBar                   │
-        ├──────────────────────────────────┤
-        │      CommandHistoryPanel         │  ← 底部
-        └──────────────────────────────────┘
-
-    紧急键盘快捷键:
-        - Esc: 停止监听
-        - Ctrl+Z: 备用撤销
+    布局（从左到右）:
+        ┌──────┬──────────────────────────────┐
+        │工具栏│  语音反馈面板                 │
+        ├──────┼──────────────────────────────┤
+        │      │  画布 + 缩放控制              │
+        │      │                              │
+        ├──────┤                              │
+        │      │  命令历史面板                 │
+        ├──────┤                              │
+        │      │  颜色面板（30+ 色块）         │
+        └──────┴──────────────────────────────┘
     """
 
     def __init__(self) -> None:
@@ -71,67 +90,126 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._setup_shortcuts()
 
+    # ── 窗口 ────────────────────────────────────────────────
+
     def _setup_window(self) -> None:
-        """设置主窗口属性。"""
         self.setWindowTitle("AI 语音绘图")
-        self.setMinimumSize(1280, 720)
-        self.resize(1920, 1080)
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #F5F5F5;
-            }
+        self.setMinimumSize(1100, 700)
+        self.resize(1600, 950)
+
+        # 深色主题
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+        self.setPalette(palette)
+
+        self.setStyleSheet(f"""
+            QMainWindow, QFrame {{
+                background-color: {BG_DARK};
+            }}
+            QFrame#canvasFrame {{
+                background-color: #FFFFFF;
+                border: 2px solid {BORDER_LIGHT};
+                border-radius: 8px;
+            }}
         """)
 
+    # ── 组件 ────────────────────────────────────────────────
+
     def _create_components(self) -> None:
-        """创建所有子组件。"""
-        # 绘图引擎
+        # 引擎
         self.engine = DrawingEngine(
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
-
-        # 语音服务
         self.voice_service = VoiceService()
-
-        # 命令解析器
         self.parser = CommandParser(
             fallback_threshold=config.WHISPER_FALLBACK_THRESHOLD,
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
 
-        # UI 组件
+        # 左侧工具栏
+        self.toolbar = Toolbar()
+
+        # 右侧主区域
+        self.main_widget = QWidget()
+        main_layout = QVBoxLayout(self.main_widget)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
+
+        # 语音反馈面板
         self.voice_panel = VoiceFeedbackPanel()
+        main_layout.addWidget(self.voice_panel)
+
+        # 画布
+        self.canvas_frame = QFrame()
+        self.canvas_frame.setObjectName("canvasFrame")
+        canvas_layout = QVBoxLayout(self.canvas_frame)
+        canvas_layout.setContentsMargins(4, 4, 4, 4)
+
         self.canvas = CanvasWidget(
             width=config.CANVAS_DEFAULT_WIDTH,
             height=config.CANVAS_DEFAULT_HEIGHT,
         )
-        self.status_bar = StatusBar()
+        self.canvas.setMinimumSize(800, 500)
+
+        # 画布缩放控制
+        self.zoom_label = QLabel("缩放: 100%")
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setRange(20, 300)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.setFixedHeight(24)
+        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
+
+        zoom_layout = QHBoxLayout()
+        zoom_layout.setContentsMargins(0, 2, 0, 0)
+        zoom_layout.addWidget(QLabel("缩放:"))
+        zoom_layout.addWidget(self.zoom_slider)
+        zoom_layout.addWidget(self.zoom_label)
+        zoom_layout.addStretch()
+        zoom_layout.addWidget(QLabel(f"画布: {config.CANVAS_DEFAULT_WIDTH}×{config.CANVAS_DEFAULT_HEIGHT}"))
+
+        canvas_layout.addWidget(self.canvas)
+        canvas_layout.addLayout(zoom_layout)
+        main_layout.addWidget(self.canvas_frame, stretch=1)
+
+        # 画布缩放 transform（简单实现：setMinimumSize 模拟）
+        self._current_zoom = 100
+
+        # 命令历史面板
         self.history_panel = CommandHistoryPanel()
+        main_layout.addWidget(self.history_panel)
 
-        # 设置为中心组件
+        # 颜色面板
+        self.color_panel = ColorPalette()
+        self.color_panel.color_selected.connect(self._on_color_selected)
+        main_layout.addWidget(self.color_panel)
+
+        # 主布局
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(3)
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {BORDER_LIGHT};
+                border-radius: 2px;
+            }}
+        """)
+        splitter.addWidget(self.toolbar)
+        splitter.addWidget(self.main_widget)
+        splitter.setSizes([180, 920])
+
         central = QWidget()
-        layout = QGridLayout(central)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # 语音反馈面板（顶部）
-        layout.addWidget(self.voice_panel, 0, 0)
-
-        # 画布（中间）
-        layout.addWidget(self.canvas, 1, 0)
-
-        # 状态栏（中下）
-        layout.addWidget(self.status_bar, 2, 0)
-
-        # 命令历史面板（底部）
-        layout.addWidget(self.history_panel, 3, 0)
-
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(splitter)
         self.setCentralWidget(central)
 
+        # 工具栏连接
+        self.toolbar.tool_selected.connect(self._on_tool_selected)
+        self.toolbar.action_clear.connect(self.engine.clear)
+        self.toolbar.action_undo.connect(self.engine.undo)
+
     def _connect_signals(self) -> None:
-        """连接各组件信号。"""
-        # 语音服务 → 语音反馈面板
         self.voice_service.signals.transcription_ready.connect(
             self._on_transcription_ready
         )
@@ -144,21 +222,6 @@ class MainWindow(QMainWindow):
         self.voice_service.signals.error.connect(
             self.voice_panel.show_error
         )
-
-        # 语音服务 → 状态栏
-        self.voice_service.signals.listening_started.connect(
-            lambda: self.status_bar.set_mic_status(True)
-        )
-        self.voice_service.signals.listening_stopped.connect(
-            lambda: self.status_bar.set_mic_status(False)
-        )
-
-        # 引擎 → 状态栏
-        self.engine.signals.state_changed.connect(
-            lambda tool, color, size: self._update_status(tool, color, size)
-        )
-
-        # 引擎 → 画布
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
         )
@@ -167,79 +230,310 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_shortcuts(self) -> None:
-        """设置紧急键盘快捷键。"""
-        # Esc: 停止监听
-        esc_action = QAction(self)
-        esc_action.setShortcut("Esc")
-        esc_action.triggered.connect(self._on_escape)
-        self.addAction(esc_action)
+        esc = QAction(self)
+        esc.setShortcut("Esc")
+        esc.triggered.connect(self.voice_service.stop_listening)
+        self.addAction(esc)
 
-        # Ctrl+Z: 备用撤销
-        undo_action = QAction(self)
-        undo_action.setShortcut("Ctrl+Z")
-        undo_action.triggered.connect(self._on_undo)
-        self.addAction(undo_action)
+        undo = QAction(self)
+        undo.setShortcut("Ctrl+Z")
+        undo.triggered.connect(self.engine.undo)
+        self.addAction(undo)
 
-    # --- 信号处理 ---
+    # ── 信号处理 ──────────────────────────────────────────
 
     def _on_transcription_ready(self, text: str, confidence: float) -> None:
-        """语音识别结果到达时的处理。
-
-        1. 在语音面板显示识别文字
-        2. 通过解析器转换为操作
-        3. 执行操作
-        4. 在历史面板记录
-        """
         self.voice_panel.show_transcription(text, confidence)
 
-        # 静默命令（开始/停止监听）不需要解析
         if text in ("开始监听", "开始听", "打开麦克风", "开始录音"):
             self.voice_service.start_listening()
-            result = self.parser.parse(text, confidence)
-            self.history_panel.add_entry(result)
             return
-
         if text in ("停止监听", "停止听", "关闭麦克风", "停止录音"):
             self.voice_service.stop_listening()
             return
 
-        # 解析
         result = self.parser.parse(text, confidence)
-
         if result.is_success:
-            # 执行操作
             self.engine.execute_multiple(result.operations)
-
-            # 构建动作描述
             op_names = [op.op_type.name for op in result.operations]
             self.voice_panel.show_action(", ".join(op_names))
-
-            # 记录历史
             self.history_panel.add_entry(result)
-
         elif result.is_uncertain:
             self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
             self.history_panel.add_entry(result)
-
         else:
             self.voice_panel.show_error("未识别")
             self.history_panel.add_entry(result)
 
-    def _update_status(self, tool: str, color: str, size: int) -> None:
-        """更新状态栏。"""
-        self.status_bar.set_tool(tool)
-        self.status_bar.set_color(color)
-        self.status_bar.set_size(size)
+    def _on_tool_selected(self, tool: str) -> None:
+        """工具栏按钮触发工具切换。"""
+        from engine.operations import PenTool, EraserTool, LineTool
+        if tool == "pen":
+            self.engine.execute(PenTool())
+        elif tool == "eraser":
+            self.engine.execute(EraserTool())
+        elif tool == "line":
+            self.engine.execute(LineTool())
 
-    def _on_escape(self) -> None:
-        """Esc: 停止监听。"""
-        self.voice_service.stop_listening()
+    def _on_color_selected(self, hex_color: str, color_name: str) -> None:
+        """颜色面板选择。"""
+        from engine.operations import ColorOperation
+        self.engine.execute(ColorOperation(color=hex_color))
+        self.toolbar.set_current_color(hex_color)
+
+    def _on_zoom_changed(self, value: int) -> None:
+        self._current_zoom = value
+        self.zoom_label.setText(f"缩放: {value}%")
+        w = int(config.CANVAS_DEFAULT_WIDTH * value / 100)
+        h = int(config.CANVAS_DEFAULT_HEIGHT * value / 100)
+        self.canvas.setMinimumSize(w, h)
+
+
+# ── 左侧工具栏 ─────────────────────────────────────────────────
+
+class Toolbar(QFrame):
+    """左侧垂直工具栏。"""
+
+    tool_selected = pyqtSignal(str)
+    action_clear = pyqtSignal()
+    action_undo = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("toolbarFrame")
+        self.setStyleSheet(f"""
+            #toolbarFrame {{
+                background-color: {BG_CARD};
+                border: none;
+                border-radius: 6px;
+            }}
+        """)
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(6)
+
+        # 标题
+        title = QLabel("工具")
+        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {TEXT_PRIMARY}; padding: 4px 0;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(4)
+
+        # 绘图工具组
+        group_label = QLabel("绘图工具")
+        group_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
+        layout.addWidget(group_label)
+
+        self._add_tool_button("✏️ 画笔", "pen", icon="🖊️")
+        self._add_tool_button("🧹 橡皮", "eraser", icon="🧽")
+        self._add_tool_button("📏 线条", "line", icon="📐")
+        layout.addSpacing(4)
+
+        # 形状工具组
+        shape_label = QLabel("形状工具")
+        shape_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
+        layout.addWidget(shape_label)
+
+        self._add_shape_button("⭕ 圆形", "画个圆")
+        self._add_shape_button("🟦 矩形", "画个矩形")
+        self._add_shape_button("🔺 三角形", "画个三角形")
+        self._add_shape_button("⭐ 星形", "画个星")
+        layout.addSpacing(4)
+
+        # 操作组
+        action_label = QLabel("操作")
+        action_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
+        layout.addWidget(action_label)
+
+        self._add_action_button("↩ 撤销", self._on_undo)
+        self._add_action_button("🗑 清空", self._on_clear, accent=True)
+        self._add_action_button("📷 AI 生成", "generate")
+        layout.addSpacing(8)
+        layout.addStretch()
+
+        # 当前颜色指示
+        self._color_row = QLabel("当前颜色: 黑色")
+        self._color_row.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; padding: 4px 0;")
+        self._color_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._color_row)
+
+        self._color_indicator = QLabel("■")
+        self._color_indicator.setFixedSize(20, 20)
+        self._color_indicator.setStyleSheet(
+            f"color: {ACCENT}; font-size: 18px; font-weight: bold;"
+        )
+        self._color_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._color_indicator, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def _add_tool_button(self, text: str, tool: str, icon: str = "") -> None:
+        btn = self._make_button(f"{icon} {text}", self._on_tool, tool)
+        layout = self.layout()
+        if layout:
+            layout.addWidget(btn)
+
+    def _add_shape_button(self, text: str, command: str) -> None:
+        btn = self._make_button(text, self._on_shape, command)
+        layout = self.layout()
+        if layout:
+            layout.addWidget(btn)
+
+    def _add_action_button(self, text: str, payload, accent: bool = False) -> None:
+        btn = self._make_button(text, self._on_action, payload, accent)
+        layout = self.layout()
+        if layout:
+            layout.addWidget(btn)
+
+    def _make_button(self, text: str, handler, payload=None, accent: bool = False) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setFixedHeight(36)
+        btn.setFixedWidth(160)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(self._btn_style(accent))
+        btn.clicked.connect(handler)
+        btn.setCheckable(True)
+
+        def _wrap(_=None, _p=payload, _b=btn):
+            handler(_p)
+            # 工具按钮高亮
+            if _p in ("pen", "eraser", "line"):
+                _b.setStyleSheet(self._btn_style(True))
+
+        btn.clicked.connect(_wrap)
+        return btn
+
+    def _btn_style(self, active: bool = False) -> str:
+        bg = ACCENT if active else BG_HOVER
+        text_color = "#FFFFFF" if active else TEXT_PRIMARY
+        return f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {text_color};
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_PRESSED};
+            }}
+            QPushButton:pressed {{
+                background-color: {ACCENT};
+            }}
+        """
+
+    def _on_tool(self, tool: str) -> None:
+        self.tool_selected.emit(tool)
+
+    def _on_shape(self, command: str) -> None:
+        self.tool_selected.emit(f"shape:{command}")
 
     def _on_undo(self) -> None:
-        """Ctrl+Z: 备用撤销。"""
-        self.engine.undo()
+        self.action_undo.emit()
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        """窗口关闭时清理资源。"""
-        self.voice_service.stop_listening()
-        event.accept()
+    def _on_clear(self) -> None:
+        self.action_clear.emit()
+
+    def _on_action(self, payload) -> None:
+        if payload == "generate":
+            self.tool_selected.emit("ai:生成一幅美丽的风景画")
+
+    def set_current_color(self, hex_color: str) -> None:
+        name = color_map.get_color(hex_color)
+        self._color_row.setText(f"当前颜色: {name}")
+        self._color_indicator.setStyleSheet(
+            f"background-color: {hex_color}; "
+            f"border: 2px solid {TEXT_DIM}; "
+            f"border-radius: 4px; "
+            f"font-size: 0px;"
+        )
+
+
+# ── 颜色面板 ─────────────────────────────────────────────────
+
+class ColorPalette(QWidget):
+    """底部颜色面板，30+ 颜色可点击。"""
+
+    color_selected = pyqtSignal(str, str)  # hex, name
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        title = QLabel("颜色选择")
+        title.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setMaximumHeight(80)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollBar:horizontal {{
+                background: {BG_CARD};
+                height: 6px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {BORDER_LIGHT};
+                border-radius: 3px;
+            }}
+        """)
+
+        self._color_grid = QWidget()
+        grid_layout = QHBoxLayout(self._color_grid)
+        grid_layout.setContentsMargins(4, 2, 4, 2)
+        grid_layout.setSpacing(3)
+
+        self._buttons: List[tuple] = []  # (btn, hex, name)
+
+        for name, hex_color in color_map.COLOR_MAP.items():
+            btn = QPushButton()
+            btn.setFixedSize(28, 28)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(name)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {hex_color};
+                    border: 2px solid {BORDER_LIGHT};
+                    border-radius: 14px;
+                }}
+                QPushButton:hover {{
+                    border-color: {ACCENT};
+                }}
+                QPushButton:pressed {{
+                    border-color: #FFFFFF;
+                }}
+            """)
+            btn.clicked.connect(lambda _=None, _hex=hex_color, _name=name: self._on_color(_hex, _name))
+            grid_layout.addWidget(btn)
+            self._buttons.append((btn, hex_color, name))
+
+        scroll.setWidget(self._color_grid)
+        layout.addWidget(scroll)
+
+    def _on_color(self, hex_color: str, name: str) -> None:
+        self.color_selected.emit(hex_color, name)
+
+
+if __name__ == "__main__":
+    import sys
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
