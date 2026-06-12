@@ -1,0 +1,17 @@
+# GUI
+pyqt6>=6.6
+pyqt6-plugins
+
+# Voice Recognition
+openai-whisper>=20231117
+sounddevice>=0.4.6
+numpy>=1.24
+soundfile>=0.12
+
+# AI Image Generation
+openai>=1.0
+requests>=2.31
+
+# Utilities
+pydantic>=2.0
+Pillow>=10.0
