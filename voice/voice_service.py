@@ -57,11 +57,12 @@ class VoiceService(QObject):
         self._base_model: Optional[whisper.Whisper] = None
         self._fallback_model: Optional[whisper.Whisper] = None
 
-        # 防抖: 两次识别之间至少间隔 2 秒
+        # 防抖: 两次识别之间保留短间隔，避免吞掉连续语音指令
         self._last_transcribe_time = 0.0
-        self._COOLDOWN = 2.0
+        self._COOLDOWN = 0.35
         self._transcribe_lock = threading.Lock()
         self._is_transcribing = False
+        self._pending_audio: Optional[np.ndarray] = None
 
         self.audio_buffer.audio_ready.connect(self._on_audio_ready)
         self.audio_buffer.error.connect(self.signals.error)
@@ -127,7 +128,8 @@ class VoiceService(QObject):
 
         with self._transcribe_lock:
             if self._is_transcribing:
-                logger.debug("识别任务仍在运行，跳过新的语音片段")
+                self._pending_audio = trimmed
+                logger.debug("识别任务仍在运行，保留最新语音片段")
                 return
             self._is_transcribing = True
 
@@ -152,8 +154,16 @@ class VoiceService(QObject):
             logger.error("Whisper 推理失败: %s", e)
             self.signals.error.emit(f"语音识别失败: {e}")
         finally:
+            next_audio: Optional[np.ndarray] = None
             with self._transcribe_lock:
-                self._is_transcribing = False
+                if self._pending_audio is not None:
+                    next_audio = self._pending_audio
+                    self._pending_audio = None
+                else:
+                    self._is_transcribing = False
+
+            if next_audio is not None:
+                self._transcribe_worker(next_audio)
 
     def _transcribe(self, audio: np.ndarray) -> tuple[str, float]:
         """使用主模型识别，置信度低时回退。
@@ -162,13 +172,21 @@ class VoiceService(QObject):
             (text, confidence)
         """
         device = "cuda" if config.WHISPER_USE_CUDA else "cpu"
-        prompt = "绘图指令 颜色 形状 工具 画笔 橡皮 线条 圆 矩形 撤销 清空 保存 红色 蓝色"
+        prompt = (
+            "这是中文语音绘图指令。常见命令包括："
+            "开始语音识别，停止语音识别，撤销，重做，清空；"
+            "用红色画笔，在中间画一个圆圈，在左上角画一个空心圆，"
+            "右下角画蓝色矩形，画三角形，画星形，画直线，"
+            "颜色包括红色、蓝色、绿色、黄色、黑色、白色。"
+        )
 
         result = self._base_model.transcribe(
             audio,
             language="zh",
             fp16=False,
             task="transcribe",
+            temperature=0.0,
+            condition_on_previous_text=False,
             initial_prompt=prompt,
         )
         text = result.get("text", "").strip()
@@ -190,6 +208,8 @@ class VoiceService(QObject):
                 audio,
                 language="zh",
                 fp16=False,
+                temperature=0.0,
+                condition_on_previous_text=False,
                 initial_prompt=prompt,
             )
             text2 = result2.get("text", "").strip()

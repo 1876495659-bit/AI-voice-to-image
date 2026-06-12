@@ -8,9 +8,9 @@ from pathlib import Path
 # Model size: "tiny" < "base" < "small" < "medium" < "large"
 # base: fastest on CPU (~1s per 10s audio), good accuracy
 # small: slower (~2s), better accuracy — used as fallback
-WHISPER_MODEL_SIZE: str = "tiny"
-WHISPER_FALLBACK_MODEL: str = "base"
-WHISPER_FALLBACK_THRESHOLD: float = 0.7  # Retry with small model if confidence < 0.7
+WHISPER_MODEL_SIZE: str = "base"
+WHISPER_FALLBACK_MODEL: str = "small"
+WHISPER_FALLBACK_THRESHOLD: float = 0.55  # Retry with fallback model only when base is clearly uncertain
 
 # Use CUDA if available (set True only if you have an NVIDIA GPU with CUDA)
 WHISPER_USE_CUDA: bool = False
@@ -18,7 +18,7 @@ WHISPER_USE_CUDA: bool = False
 # ── Voice Settings ────────────────────────────────────────────────
 AUDIO_SAMPLE_RATE: int = 16000
 AUDIO_CHUNK_DURATION: float = 2.0  # seconds of audio per Whisper batch
-AUDIO_VOLUME_THRESHOLD: float = 0.04  # VAD threshold — tuned for this microphone
+AUDIO_VOLUME_THRESHOLD: float = 0.012  # VAD threshold — lower value improves normal speech pickup
 
 # ── UI Settings ───────────────────────────────────────────────────
 CANVAS_DEFAULT_WIDTH: int = 1920
