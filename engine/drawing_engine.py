@@ -145,6 +145,10 @@ class DrawingEngine:
         """返回当前 (工具, 颜色, 粗细) 状态。"""
         return self.current_tool, self.current_color, self.current_size
 
+    def get_history(self) -> List[DrawingOperation]:
+        """返回当前可重绘的操作历史。"""
+        return self.history.history
+
     # --- 私有分发 ---
 
     def _handle_tool(self, operation: ToolOperation) -> None:
@@ -210,6 +214,14 @@ class DrawingEngine:
         """处理清空画布。"""
         self.clear()
 
+    def _handle_undo(self, operation: DrawingOperation) -> None:
+        """处理语音撤销命令。"""
+        self.undo()
+
+    def _handle_redo(self, operation: DrawingOperation) -> None:
+        """处理语音重做命令。"""
+        self.redo()
+
     def _emit_state_changed(self) -> None:
         """发出状态变更信号。"""
         self.signals.state_changed.emit(
@@ -233,4 +245,6 @@ class DrawingEngine:
         OperationType.STAR: _handle_star,
         OperationType.AI_IMAGE: _handle_ai_image,
         OperationType.CLEAR: _handle_clear,
+        OperationType.UNDO: _handle_undo,
+        OperationType.REDO: _handle_redo,
     }

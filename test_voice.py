@@ -1,140 +1,112 @@
-"""语音功能测试脚本 — 无需 GUI。"""
+"""语音功能测试脚本（无需真实麦克风和 Whisper 模型）。"""
+
+from __future__ import annotations
+
 import sys
+
 import numpy as np
 from PyQt6.QtWidgets import QApplication
 
-app = QApplication(sys.argv)
+from engine.drawing_engine import DrawingEngine
+from parser.command_parser import CommandParser
+from voice.audio_buffer import AudioBuffer
+from voice.voice_service import VoiceService
+
+
+app = QApplication.instance() or QApplication(sys.argv)
 
 print("=" * 50)
 print("语音功能测试")
 print("=" * 50)
 print()
 
-# ── 1. AudioBuffer ──────────────────────────────────
-print("[1] AudioBuffer 测试")
-from voice.audio_buffer import AudioBuffer
-buf = AudioBuffer()
-print(f"  采样率: {buf._sample_rate}")
-print(f"  块大小: {buf._chunk_size}")
-print(f"  运行中: {buf.is_running}")
 
-buf.start()
-print(f"  启动后运行中: {buf.is_running}")
+print("[1] AudioBuffer 合成 VAD 测试")
+buf = AudioBuffer(volume_threshold=0.008)
+buf._mic_sr = 16000
+buf._volume_threshold = 0.008
 
-# 采集 1 秒
-import time
-time.sleep(1.1)
-data = buf.get_buffer_data()
-if data is not None:
-    print(f"  缓冲区数据长度: {len(data)}")
-    rms = float(np.sqrt(np.mean(data ** 2)))
-    print(f"  当前音量(RMS): {rms:.6f}")
-    print(f"  VAD活跃: {buf.vad_active}")
-else:
-    print("  缓冲区数据: None")
+ready_audio: list[np.ndarray] = []
+buf.audio_ready.connect(ready_audio.append)
 
-buf.stop()
-print(f"  停止后运行中: {buf.is_running}")
+speech = np.ones(16000, dtype=np.float32) * 0.02
+silence = np.zeros(16000, dtype=np.float32)
+buf._audio_callback(speech.reshape(-1, 1), len(speech), None, None)
+buf._audio_callback(silence.reshape(-1, 1), len(silence), None, None)
+buf._silence_start = 0.0
+buf._try_flush(0.0)
+buf._silence_start -= buf.SILENCE_DURATION + 0.1
+buf._try_flush(0.0)
+buf._poll_queue()
+
+assert ready_audio, "合成语音应触发 audio_ready"
+print(f"  输出语音长度: {len(ready_audio[0])}")
 print("  OK")
 print()
 
-# ── 2. VoiceService 初始化 ─────────────────────────
-print("[2] VoiceService 初始化")
-from voice.voice_service import VoiceService
-vs = VoiceService()
-print("  正在加载 Whisper base 模型...")
-result = vs.initialize()
-print(f"  初始化结果: {result}")
-print(f"  模型加载: {vs._base_model is not None}")
-if result:
-    print("  OK")
-else:
-    print("  WARN: 模型加载失败")
+
+print("[2] VoiceService 转录信号测试")
+
+
+class _FakeWhisperModel:
+    def transcribe(self, audio, **kwargs):
+        return {
+            "text": "\u753b\u4e2a\u5706",
+            "segments": [{"avg_logprob": 2.0}],
+        }
+
+
+service = VoiceService(audio_buffer=buf)
+service._base_model = _FakeWhisperModel()
+
+transcriptions: list[tuple[str, float]] = []
+service.signals.transcription_ready.connect(
+    lambda text, confidence: transcriptions.append((text, confidence))
+)
+service._on_audio_ready(ready_audio[0])
+
+assert transcriptions, "转录结果应通过 transcription_ready 发出"
+print(f"  识别文本: {transcriptions[0][0]}")
+print(f"  置信度: {transcriptions[0][1]:.2f}")
+print("  OK")
 print()
 
-# ── 3. Whisper 推理测试 ────────────────────────────
-print("[3] Whisper 推理测试")
-if vs._base_model:
-    # 静音测试
-    silence = np.zeros(16000, dtype=np.float32)
-    result = vs._base_model.transcribe(silence, language="zh", fp16=False)
-    text = result.get("text", "").strip()
-    print(f"  静音输入: \"{text}\"")
-    print(f"  segments: {len(result.get('segments', []))}")
 
-    # 短语音测试（2秒）
-    short_audio = np.random.randn(32000).astype(np.float32) * 0.01
-    result2 = vs._base_model.transcribe(short_audio, language="zh", fp16=False)
-    text2 = result2.get("text", "").strip()
-    print(f"  噪声输入: \"{text2}\"")
-    print("  OK")
-else:
-    print("  SKIP: 模型未加载")
-print()
-
-# ── 4. 置信度估算 ──────────────────────────────────
-print("[4] 置信度估算")
-if vs._base_model:
-    conf = vs._estimate_confidence({"segments": [{"tokens": [{"avg_logprob": -0.5}]}]}, "你好世界")
-    print(f"  正常文本置信度: {conf:.4f}")
-    conf_empty = vs._estimate_confidence({}, "")
-    print(f"  空文本置信度: {conf_empty}")
-    print("  OK")
-print()
-
-# ── 5. 命令解析管道 ────────────────────────────────
-print("[5] 命令解析管道")
-from parser.command_parser import CommandParser
+print("[3] 命令解析管道")
 parser = CommandParser()
 test_cases = [
-    ("用画笔", "工具"),
-    ("画个圆", "形状"),
-    ("红色", "颜色"),
-    ("撤销", "系统"),
-    ("清空", "系统"),
-    ("大小 10", "粗细"),
-    ("生成一幅日落海景", "AI"),
+    ("\u7528\u753b\u7b14", "工具"),
+    ("\u753b\u4e2a\u5706", "形状"),
+    ("\u7ea2\u8272", "颜色"),
+    ("\u64a4\u9500", "系统"),
+    ("\u6e05\u7a7a", "系统"),
+    ("\u5927\u5c0f 10", "粗细"),
+    ("\u751f\u6210\u4e00\u5e45\u65e5\u843d\u6d77\u666f", "AI"),
 ]
 for text, category in test_cases:
-    r = parser.parse(text, 0.9)
-    status = "OK" if r.is_success else "FAIL"
-    ops = [o.op_type.name for o in r.operations]
+    result = parser.parse(text, 0.9)
+    status = "OK" if result.is_success else "FAIL"
+    ops = [op.op_type.name for op in result.operations]
     print(f"  [{status}] [{category}] \"{text}\" -> {ops}")
+    assert result.is_success
 print()
 
-# ── 6. 完整管道 ────────────────────────────────────
-print("[6] 完整管道测试 (语音 -> 解析 -> 引擎)")
-from engine.drawing_engine import DrawingEngine
+
+print("[4] 完整管道测试（转录 -> 解析 -> 引擎）")
 engine = DrawingEngine()
 
-# 模拟语音识别结果
-mock_transcriptions = [
-    ("用画笔", 0.95),
-    ("红色", 0.92),
-    ("画个圆", 0.88),
-    ("撤销", 0.99),
-]
+for text, confidence in transcriptions:
+    result = parser.parse(text, confidence)
+    assert result.is_success
+    engine.execute_multiple(result.operations)
 
-for text, confidence in mock_transcriptions:
-    r = parser.parse(text, confidence)
-    if r.is_success:
-        engine.execute_multiple(r.operations)
-        print(f"  \"{text}\" -> 执行 {len(r.operations)} 个操作")
-    else:
-        print(f"  \"{text}\" -> 解析失败")
-
-print(f"  最终状态: 工具={engine.current_tool}, 颜色={engine.current_color}, 粗细={engine.current_size}")
+assert engine.history.undo_count == 1
 print(f"  历史操作数: {engine.history.undo_count}")
 print("  OK")
-
 print()
+
 print("=" * 50)
 print("语音管道测试完成！")
 print("=" * 50)
-print()
-print("实际麦克风语音测试需要:")
-print("  1. 运行 python main.py")
-print("  2. 说\"开始监听\"启动麦克风")
-print("  3. 说指令如\"画个圆\"")
-print()
-sys.exit(0)
+
+assert app is not None

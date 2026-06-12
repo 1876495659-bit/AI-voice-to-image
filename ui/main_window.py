@@ -209,7 +209,15 @@ class MainWindow(QMainWindow):
         self.toolbar.action_clear.connect(self.engine.clear)
         self.toolbar.action_undo.connect(self.engine.undo)
 
+    def _on_repaint(self) -> None:
+        """撤销/重做后重建画布操作列表。"""
+        self.canvas.clear()
+        for op in self.engine.get_history():
+            self.canvas._operations.append(op)
+        self.canvas.update()
+
     def _connect_signals(self) -> None:
+        """连接各组件信号。"""
         self.voice_service.signals.transcription_ready.connect(
             self._on_transcription_ready
         )
@@ -222,25 +230,9 @@ class MainWindow(QMainWindow):
         self.voice_service.signals.error.connect(
             self.voice_panel.show_error
         )
-        # 音量指示器
         self.voice_service.audio_buffer.volume_changed.connect(
             self.voice_panel.show_volume
         )
-        self.engine.signals.operation_added.connect(
-            self.canvas.add_operation
-        )
-        self.engine.signals.canvas_cleared.connect(
-            self.canvas.clear
-        )
-    def _on_repaint(self) -> None:
-        """撤销/重做后重建画布操作列表。"""
-        self.canvas.clear()
-        for op in self.engine.get_history():
-            self.canvas._operations.append(op)
-        self.canvas.update()
-
-    def _connect_signals(self) -> None:
-        """连接各组件信号。"""
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
         )
