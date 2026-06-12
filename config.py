@@ -18,7 +18,7 @@ WHISPER_USE_CUDA: bool = False
 # ── Voice Settings ────────────────────────────────────────────────
 AUDIO_SAMPLE_RATE: int = 16000
 AUDIO_CHUNK_DURATION: float = 2.0  # seconds of audio per Whisper batch
-AUDIO_VOLUME_THRESHOLD: float = 0.008  # VAD threshold — tuned for this microphone (RMS median ~0.004 when speaking)
+AUDIO_VOLUME_THRESHOLD: float = 0.04  # VAD threshold — tuned for this microphone
 
 # ── UI Settings ───────────────────────────────────────────────────
 CANVAS_DEFAULT_WIDTH: int = 1920
