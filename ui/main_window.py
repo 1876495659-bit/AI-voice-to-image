@@ -273,7 +273,12 @@ class MainWindow(QMainWindow):
             self.voice_panel.show_action(", ".join(op_names))
             self.history_panel.add_entry(result)
         elif result.is_uncertain:
-            self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
+            if result.operations:
+                self.engine.execute_multiple(result.operations)
+                op_names = [op.op_type.name for op in result.operations]
+                self.voice_panel.show_action(f"低置信已执行: {', '.join(op_names)}")
+            else:
+                self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
             self.history_panel.add_entry(result)
         else:
             self.voice_panel.show_error("未识别")

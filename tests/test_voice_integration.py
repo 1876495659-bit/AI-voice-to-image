@@ -33,6 +33,21 @@ def test_transcription_signal_drives_canvas_and_history() -> None:
     assert app is not None
 
 
+def test_low_confidence_shape_command_still_draws_when_parse_is_clear() -> None:
+    """置信度偏低但已解析出明确绘图操作时，应执行该操作。"""
+    app = _app()
+    window = MainWindow()
+    command = "\u753b\u4e00\u4e2a\u5706\u5708"
+
+    window.voice_service.signals.transcription_ready.emit(command, 0.49)
+
+    assert window.canvas.operation_count == 1
+    assert window.history_panel.entry_count == 1
+    assert window.voice_panel.text_label.text() == command
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas_and_history()
+    test_low_confidence_shape_command_still_draws_when_parse_is_clear()
     print("test_voice_integration: OK")
