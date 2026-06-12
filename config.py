@@ -18,7 +18,7 @@ WHISPER_USE_CUDA: bool = False
 # ── Voice Settings ────────────────────────────────────────────────
 AUDIO_SAMPLE_RATE: int = 16000
 AUDIO_CHUNK_DURATION: float = 2.0  # seconds of audio per Whisper batch
-AUDIO_VOLUME_THRESHOLD: float = 0.01  # VAD threshold for voice activity detection
+AUDIO_VOLUME_THRESHOLD: float = 0.001  # VAD threshold for voice activity detection
 
 # ── UI Settings ───────────────────────────────────────────────────
 CANVAS_DEFAULT_WIDTH: int = 1920

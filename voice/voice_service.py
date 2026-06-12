@@ -122,6 +122,8 @@ class VoiceService(QObject):
                 audio,
                 language="zh",
                 fp16=False,  # CPU 上 fp16 可能出错
+                task="transcribe",
+                initial_prompt="绘图指令 颜色 形状 工具",
             )
             text = result.get("text", "").strip()
             # Whisper base 不返回置信度，使用默认高置信度
@@ -132,8 +134,12 @@ class VoiceService(QObject):
             if confidence < config.WHISPER_FALLBACK_THRESHOLD:
                 confidence = self._fallback_recognition(audio, text)
 
+            # 记录日志用于调试
             if text:
+                logger.info(f"识别结果: \"{text}\" (置信度: {confidence:.2f})")
                 self.signals.transcription_ready.emit(text, confidence)
+            else:
+                logger.debug(f"未识别到语音 (audio length: {len(audio)})")
 
         except Exception as e:
             logger.error(f"Whisper 推理失败: {e}")
