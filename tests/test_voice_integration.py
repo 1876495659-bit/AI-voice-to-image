@@ -47,7 +47,26 @@ def test_low_confidence_shape_command_still_draws_when_parse_is_clear() -> None:
     assert app is not None
 
 
+def test_execute_button_runs_current_transcription_text() -> None:
+    """点击执行按钮应按当前显示的识别文本执行命令。"""
+    app = _app()
+    window = MainWindow()
+    command = "\u7528\u7ea2\u7b14\u753b\u4e00\u4e2a\u5706\u5708"
+
+    window.voice_service.signals.transcription_ready.emit(command, 0.46)
+    assert window.canvas.operation_count == 1
+    assert window.voice_panel.execute_button.isEnabled()
+
+    window.voice_panel.execute_button.click()
+
+    assert window.canvas.operation_count == 2
+    assert window.history_panel.entry_count == 2
+    assert "\u624b\u52a8\u6267\u884c" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas_and_history()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
+    test_execute_button_runs_current_transcription_text()
     print("test_voice_integration: OK")

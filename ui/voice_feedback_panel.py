@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPainter, QColor, QLinearGradient
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +24,8 @@ from PyQt6.QtWidgets import (
 
 class VoiceFeedbackPanel(QWidget):
     """增强版语音反馈面板。"""
+
+    execute_requested = pyqtSignal(str)
 
     _BG = """
         QWidget {
@@ -35,6 +38,7 @@ class VoiceFeedbackPanel(QWidget):
         super().__init__(parent)
 
         self._setup_ui()
+        self._last_text = ""
         self._reset_timeout = QTimer(self)
         self._reset_timeout.setSingleShot(True)
         self._reset_timeout.timeout.connect(self._reset_text)
@@ -97,6 +101,30 @@ class VoiceFeedbackPanel(QWidget):
         self.confidence_bar.setStyleSheet(self._progress_style("#00AA00"))
         layout.addWidget(self.confidence_bar)
 
+        self.execute_button = QPushButton("执行识别文本")
+        self.execute_button.setEnabled(False)
+        self.execute_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.execute_button.setFixedHeight(34)
+        self.execute_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6C63FF;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #5544CC;
+            }
+            QPushButton:disabled {
+                background-color: #3A3A50;
+                color: #777777;
+            }
+        """)
+        self.execute_button.clicked.connect(self._emit_execute_requested)
+        layout.addWidget(self.execute_button)
+
         # --- 解析动作 ---
         self.action_label = QLabel("")
         font2 = QFont("Microsoft YaHei", 13)
@@ -158,6 +186,7 @@ class VoiceFeedbackPanel(QWidget):
     # ── 公共 API ──────────────────────────────────────────
 
     def show_transcription(self, text: str, confidence: float) -> None:
+        self._last_text = text.strip()
         self.text_label.setText(text)
         self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
         pct = int(confidence * 100)
@@ -169,6 +198,7 @@ class VoiceFeedbackPanel(QWidget):
         else:
             color = "#F87171"
         self.confidence_bar.setStyleSheet(self._progress_style(color))
+        self.execute_button.setEnabled(bool(self._last_text))
         self._fade_timer.stop()
         self._fade_timer.start(3000)
 
@@ -176,7 +206,8 @@ class VoiceFeedbackPanel(QWidget):
         self.action_label.setText(f"→ {action_text}")
 
     def show_error(self, error_text: str) -> None:
-        self.text_label.setText("请再说一遍")
+        if not self._last_text:
+            self.text_label.setText("请再说一遍")
         self.text_label.setStyleSheet("color: #F87171; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText(f"→ {error_text}")
@@ -186,12 +217,14 @@ class VoiceFeedbackPanel(QWidget):
         self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+        self.execute_button.setEnabled(False)
 
     def show_silence(self) -> None:
         self.text_label.setText("麦克风未连接")
         self.text_label.setStyleSheet("color: #777777; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+        self.execute_button.setEnabled(False)
 
     def show_volume(self, rms: float) -> None:
         """显示音量（由 AudioBuffer.volume_changed 连接）。"""
@@ -201,6 +234,11 @@ class VoiceFeedbackPanel(QWidget):
         self.text_label.setText("")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+        self.execute_button.setEnabled(False)
 
     def _fade_out(self) -> None:
         self.action_label.clear()
+
+    def _emit_execute_requested(self) -> None:
+        if self._last_text:
+            self.execute_requested.emit(self._last_text)

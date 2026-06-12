@@ -233,6 +233,9 @@ class MainWindow(QMainWindow):
         self.voice_service.audio_buffer.volume_changed.connect(
             self.voice_panel.show_volume
         )
+        self.voice_panel.execute_requested.connect(
+            self._on_execute_requested
+        )
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
         )
@@ -266,17 +269,27 @@ class MainWindow(QMainWindow):
             self.voice_service.stop_listening()
             return
 
+        self._execute_voice_text(text, confidence)
+
+    def _on_execute_requested(self, text: str) -> None:
+        """手动执行当前识别文本，绕过 Whisper 低置信门槛。"""
+        self._execute_voice_text(text, 1.0, manual=True)
+
+    def _execute_voice_text(self, text: str, confidence: float, manual: bool = False) -> None:
+        """解析并执行语音文本。"""
         result = self.parser.parse(text, confidence)
         if result.is_success:
             self.engine.execute_multiple(result.operations)
             op_names = [op.op_type.name for op in result.operations]
-            self.voice_panel.show_action(", ".join(op_names))
+            prefix = "手动执行: " if manual else ""
+            self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
             self.history_panel.add_entry(result)
         elif result.is_uncertain:
             if result.operations:
                 self.engine.execute_multiple(result.operations)
                 op_names = [op.op_type.name for op in result.operations]
-                self.voice_panel.show_action(f"低置信已执行: {', '.join(op_names)}")
+                prefix = "手动执行: " if manual else "低置信已执行: "
+                self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
             else:
                 self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
             self.history_panel.add_entry(result)

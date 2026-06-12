@@ -88,6 +88,7 @@ tests = [
     ('大小 10', ParseResultType.SUCCESS, ['SIZE']),
     ('生成一幅日落海景', ParseResultType.SUCCESS, ['AI_IMAGE']),
     ('用红色画笔画个圆', ParseResultType.SUCCESS, ['COLOR', 'PEN', 'CIRCLE']),
+    ('用红笔画一个圆圈', ParseResultType.SUCCESS, ['COLOR', 'PEN', 'CIRCLE']),
     ('', ParseResultType.REJECT, []),
 ]
 
