@@ -16,6 +16,13 @@
 import logging
 import sys
 
+# 必须在 import PyQt6 之前设置
+import os
+os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "Lib", "site-packages", "PyQt6", "Qt6", "plugins"
+)
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 

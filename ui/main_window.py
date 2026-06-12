@@ -412,15 +412,13 @@ class Toolbar(QFrame):
         btn.setFixedWidth(160)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(self._btn_style(accent))
-        btn.clicked.connect(handler)
-        btn.setCheckable(True)
 
-        def _wrap(_=None, _p=payload, _b=btn):
-            handler(_p)
+        # 用 lambda 捕获，避免 clicked(bool) 信号传 bool 导致类型错误
+        def _wrap(_=None, _h=handler, _p=payload, _b=btn):
+            _h(_p)
             # 工具按钮高亮
             if _p in ("pen", "eraser", "line"):
                 _b.setStyleSheet(self._btn_style(True))
-
         btn.clicked.connect(_wrap)
         return btn
 
