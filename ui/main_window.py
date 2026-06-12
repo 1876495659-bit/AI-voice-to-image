@@ -222,6 +222,10 @@ class MainWindow(QMainWindow):
         self.voice_service.signals.error.connect(
             self.voice_panel.show_error
         )
+        # 音量指示器
+        self.voice_service.audio_buffer.volume_changed.connect(
+            self.voice_panel.show_volume
+        )
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
         )

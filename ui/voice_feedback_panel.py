@@ -1,16 +1,19 @@
-"""语音反馈面板 — 美化版。
+"""语音反馈面板 — 增强版。
 
-大字显示识别到的语音文字 + 渐变置信度条 + 解析动作。
-深色主题 + 渐变背景 + 动画淡出效果。
+大字显示识别到的语音文字 + 置信度进度条 + 解析动作确认。
+新增: 实时音量柱状图可视化，让你能看到麦克风是否收到声音。
+引用:
+- `voice/voice_service.py` — VoiceService.signals.transcription_ready 信号
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation
-from PyQt6.QtGui import QFont, QLinearGradient, QColor
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QPainter, QColor, QLinearGradient
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QVBoxLayout,
@@ -19,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 
 class VoiceFeedbackPanel(QWidget):
-    """美化版语音反馈面板。"""
+    """增强版语音反馈面板。"""
 
     _BG = """
         QWidget {
@@ -41,21 +44,51 @@ class VoiceFeedbackPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(8)
 
-        # 识别文字 — 大字渐变
+        # --- 音量指示器 ---
+        vol_layout = QVBoxLayout()
+        vol_title = QLabel("🎤 麦克风音量")
+        vol_title.setFont(QFont("Microsoft YaHei", 11))
+        vol_title.setStyleSheet("color: #AAAAAA; padding: 0;")
+        vol_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vol_layout.addWidget(vol_title)
+
+        # 音量条容器
+        self.volume_frame = QWidget()
+        self.volume_frame.setFixedHeight(60)
+        self.volume_frame.setStyleSheet("background: transparent;")
+        vol_layout.addWidget(self.volume_frame)
+
+        volume_h = QHBoxLayout(self.volume_frame)
+        volume_h.setContentsMargins(10, 10, 10, 5)
+        volume_h.setSpacing(3)
+
+        # 15 个音量条
+        self.vol_bars: list[QLabel] = []
+        for i in range(15):
+            bar = QLabel()
+            bar.setFixedSize(20, 30)
+            bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            bar.setStyleSheet(self._vol_bar_style("#555555", 10))
+            volume_h.addWidget(bar)
+            self.vol_bars.append(bar)
+
+        volume_h.addStretch()
+
+        layout.addLayout(vol_layout)
+        layout.addSpacing(4)
+
+        # --- 识别文字 ---
         self.text_label = QLabel("请说话...")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = QFont("Microsoft YaHei", 26, QFont.Weight.Bold)
+        font = QFont("Microsoft YaHei", 24, QFont.Weight.Bold)
         self.text_label.setFont(font)
-        self.text_label.setStyleSheet("""
-            color: #EAEAEA;
-            min-height: 36px;
-        """)
+        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
         layout.addWidget(self.text_label)
 
-        # 置信度进度条 — 渐变填充
+        # --- 置信度进度条 ---
         self.confidence_bar = QProgressBar()
         self.confidence_bar.setRange(0, 100)
         self.confidence_bar.setValue(0)
@@ -64,7 +97,7 @@ class VoiceFeedbackPanel(QWidget):
         self.confidence_bar.setStyleSheet(self._progress_style("#00AA00"))
         layout.addWidget(self.confidence_bar)
 
-        # 解析动作
+        # --- 解析动作 ---
         self.action_label = QLabel("")
         font2 = QFont("Microsoft YaHei", 13)
         self.action_label.setFont(font2)
@@ -72,9 +105,20 @@ class VoiceFeedbackPanel(QWidget):
         self.action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.action_label)
 
+        self.setLayout(layout)
         self.setStyleSheet(self._BG)
 
-    # ── 进度条样式 ──────────────────────────────────────────
+    # ── 样式 ──────────────────────────────────────────────
+
+    def _vol_bar_style(self, color: str, height: int = 30) -> str:
+        return f"""
+            QLabel {{
+                background-color: {color};
+                border-radius: 3px;
+                min-height: {height}px;
+                max-height: {height}px;
+            }}
+        """
 
     def _progress_style(self, color: str) -> str:
         return f"""
@@ -94,24 +138,37 @@ class VoiceFeedbackPanel(QWidget):
             }}
         """
 
+    def _update_volume_display(self, rms: float) -> None:
+        """根据 RMS 音量更新柱状图。"""
+        intensity = min(14, int(rms * 100))  # 0-14 格
+        for i, bar in enumerate(self.vol_bars):
+            if i < intensity:
+                if rms > 0.05:
+                    color = "#F87171"   # 高音量红色
+                elif rms > 0.01:
+                    color = "#FBBF24"   # 中音量黄色
+                else:
+                    color = "#4ADE80"   # 低音量绿色
+                bar.setStyleSheet(self._vol_bar_style(color, 10 + i * 2))
+                bar.show()
+            else:
+                bar.setStyleSheet(self._vol_bar_style("#555555", 10))
+                bar.hide()
+
     # ── 公共 API ──────────────────────────────────────────
 
     def show_transcription(self, text: str, confidence: float) -> None:
         self.text_label.setText(text)
         self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
-
         pct = int(confidence * 100)
         self.confidence_bar.setValue(pct)
-
         if confidence >= 0.8:
-            color = "#4ADE80"   # 绿色
+            color = "#4ADE80"
         elif confidence >= 0.6:
-            color = "#FBBF24"   # 黄色
+            color = "#FBBF24"
         else:
-            color = "#F87171"   # 红色
+            color = "#F87171"
         self.confidence_bar.setStyleSheet(self._progress_style(color))
-
-        # 显示动作
         self._fade_timer.stop()
         self._fade_timer.start(3000)
 
@@ -136,11 +193,14 @@ class VoiceFeedbackPanel(QWidget):
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
 
+    def show_volume(self, rms: float) -> None:
+        """显示音量（由 AudioBuffer.volume_changed 连接）。"""
+        self._update_volume_display(rms)
+
     def _reset_text(self) -> None:
         self.text_label.setText("")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
 
     def _fade_out(self) -> None:
-        """渐变淡出效果."""
         self.action_label.clear()
