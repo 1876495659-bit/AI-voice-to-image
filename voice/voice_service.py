@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 class VoiceServiceSignals(QObject):
     """语音服务信号。"""
 
+    recognition_started = pyqtSignal()
     partial_transcription = pyqtSignal(str)
     transcription_ready = pyqtSignal(str, float)
     listening_started = pyqtSignal()
@@ -145,6 +146,7 @@ class VoiceService(QObject):
     def _transcribe_worker(self, audio: np.ndarray) -> None:
         """后台线程执行 Whisper，避免阻塞 Qt 主线程。"""
         try:
+            self.signals.recognition_started.emit()
             text, confidence = self._transcribe(audio)
             if text:
                 self._last_transcribe_time = time.monotonic()

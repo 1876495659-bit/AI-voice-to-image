@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
         self.voice_service.signals.partial_transcription.connect(
             self.voice_panel.show_partial_transcription
         )
+        self.voice_service.signals.recognition_started.connect(
+            self.voice_panel.show_recognition_started
+        )
         self.voice_service.signals.listening_started.connect(
             self._on_listening_started
         )
@@ -246,6 +249,10 @@ class MainWindow(QMainWindow):
             self.voice_service.stop_listening()
             self._voice_listening_active = False
             self.voice_panel.set_listening_active(False)
+            return
+
+        if self.voice_service._base_model is None:
+            self.voice_panel.show_error("语音识别模型未就绪，请稍后再试")
             return
 
         if self.voice_service.start_listening():

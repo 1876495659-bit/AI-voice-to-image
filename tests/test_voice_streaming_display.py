@@ -38,6 +38,8 @@ def test_voice_service_emits_partial_text_prefixes_before_final_result() -> None
     service._stream_char_interval = 0.0
     partials: list[str] = []
     finals: list[str] = []
+    status_events: list[str] = []
+    service.signals.recognition_started.connect(lambda: status_events.append("started"))
     service.signals.partial_transcription.connect(partials.append)
     service.signals.transcription_ready.connect(lambda text, confidence: finals.append(text))
 
@@ -48,6 +50,7 @@ def test_voice_service_emits_partial_text_prefixes_before_final_result() -> None
         app.processEvents()
         time.sleep(0.01)
 
+    assert status_events == ["started"]
     assert partials == ["\u753b", "\u753b\u4e2a", "\u753b\u4e2a\u5706"]
     assert finals == ["\u753b\u4e2a\u5706"]
     assert app is not None

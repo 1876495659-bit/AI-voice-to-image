@@ -248,9 +248,6 @@ class AudioBuffer(QObject):
     def _audio_callback(self, indata: np.ndarray, frames: int,
                         time_info, status: sd.CallbackFlags) -> None:
         """后台线程: 采集 → 重采样 → VAD。"""
-        if status:
-            return
-
         audio = np.mean(indata, axis=1).astype(np.float32) if indata.ndim > 1 else indata
         rms = float(np.sqrt(np.mean(audio ** 2)))
 

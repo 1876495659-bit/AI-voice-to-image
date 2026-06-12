@@ -39,6 +39,7 @@ def test_voice_button_toggles_listening_state() -> None:
     app = _app()
     window = MainWindow()
     calls: list[str] = []
+    window.voice_service._base_model = object()
     window.voice_service.start_listening = lambda: calls.append("start") or True
     window.voice_service.stop_listening = lambda: calls.append("stop")
 
@@ -49,7 +50,20 @@ def test_voice_button_toggles_listening_state() -> None:
     assert app is not None
 
 
+def test_voice_button_reports_when_model_is_not_ready() -> None:
+    """模型未加载时点击语音按钮应给出明确提示。"""
+    app = _app()
+    window = MainWindow()
+    window.voice_service._base_model = None
+
+    window.voice_panel.listen_button.click()
+
+    assert "语音识别模型未就绪" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_main_window_uses_minimal_voice_canvas_layout()
     test_voice_button_toggles_listening_state()
+    test_voice_button_reports_when_model_is_not_ready()
     print("test_minimal_voice_ui: OK")
