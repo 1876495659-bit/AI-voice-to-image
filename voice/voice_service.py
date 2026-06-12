@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from typing import Optional
 
@@ -59,6 +60,8 @@ class VoiceService(QObject):
         # 防抖: 两次识别之间至少间隔 2 秒
         self._last_transcribe_time = 0.0
         self._COOLDOWN = 2.0
+        self._transcribe_lock = threading.Lock()
+        self._is_transcribing = False
 
         self.audio_buffer.audio_ready.connect(self._on_audio_ready)
         self.audio_buffer.error.connect(self.signals.error)
@@ -122,17 +125,35 @@ class VoiceService(QObject):
         if len(trimmed) > max_len:
             trimmed = trimmed[:max_len]
 
+        with self._transcribe_lock:
+            if self._is_transcribing:
+                logger.debug("识别任务仍在运行，跳过新的语音片段")
+                return
+            self._is_transcribing = True
+
+        worker = threading.Thread(
+            target=self._transcribe_worker,
+            args=(trimmed,),
+            daemon=True,
+        )
+        worker.start()
+
+    def _transcribe_worker(self, audio: np.ndarray) -> None:
+        """后台线程执行 Whisper，避免阻塞 Qt 主线程。"""
         try:
-            text, confidence = self._transcribe(trimmed)
+            text, confidence = self._transcribe(audio)
             if text:
                 self._last_transcribe_time = time.monotonic()
                 logger.info("识别: \"%s\" (置信度: %.2f)", text, confidence)
                 self.signals.transcription_ready.emit(text, confidence)
             else:
-                logger.debug("未识别到语音 (trimmed: %.2fs)", len(trimmed) / 16000)
+                logger.debug("未识别到语音 (trimmed: %.2fs)", len(audio) / 16000)
         except Exception as e:
             logger.error("Whisper 推理失败: %s", e)
             self.signals.error.emit(f"语音识别失败: {e}")
+        finally:
+            with self._transcribe_lock:
+                self._is_transcribing = False
 
     def _transcribe(self, audio: np.ndarray) -> tuple[str, float]:
         """使用主模型识别，置信度低时回退。

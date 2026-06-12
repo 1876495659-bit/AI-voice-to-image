@@ -65,6 +65,11 @@ service.signals.transcription_ready.connect(
 )
 service._on_audio_ready(ready_audio[0])
 
+deadline = __import__("time").perf_counter() + 2.0
+while not transcriptions and __import__("time").perf_counter() < deadline:
+    app.processEvents()
+    __import__("time").sleep(0.01)
+
 assert transcriptions, "转录结果应通过 transcription_ready 发出"
 print(f"  识别文本: {transcriptions[0][0]}")
 print(f"  置信度: {transcriptions[0][1]:.2f}")
