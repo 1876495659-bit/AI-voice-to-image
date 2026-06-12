@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 
-class StatusBar(QStatusBar):
+class AppStatusBar(QStatusBar):
     """美化版状态栏 — 胶囊式信息卡片。"""
 
     _STYLE = """
@@ -74,4 +74,4 @@ class StatusBar(QStatusBar):
             self.mic_label.setStyleSheet("color: #4ADE80; font-weight: bold; background-color: #1a3a2a; border-radius: 10px; padding: 2px 8px; font-size: 12px;")
         else:
             self.mic_label.setText("🎤 未连接")
-            self.mic_label.setStyleSheet(StatusBar._STYLE)
+            self.mic_label.setStyleSheet(AppStatusBar._STYLE)

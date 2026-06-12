@@ -51,6 +51,12 @@ class DrawingEngineSignals(QObject):
     canvas_cleared = pyqtSignal()
     # 状态变更（当前工具/颜色/粗细）
     state_changed = pyqtSignal(str, str, int)  # tool, color, size
+    # 撤销/重做后需要重绘
+    repaint = pyqtSignal()
+
+    def get_history(self):
+        """返回当前历史中的所有操作（供 canvas 重绘使用）。"""
+        return self.history.history
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +104,7 @@ class DrawingEngine:
         """
         handler = self._handlers.get(operation.op_type)
         if handler is not None:
-            handler(operation)
+            handler(self, operation)
         else:
             # 未知操作类型也压入历史（避免历史丢失）
             self.history.push(operation)
@@ -118,14 +124,14 @@ class DrawingEngine:
         """撤销一步。"""
         op = self.history.undo()
         if op is not None:
-            self.signals.operation_added.emit(op)  # 告诉 UI "擦除" 此操作
+            self.signals.repaint.emit()
         return op
 
     def redo(self) -> Optional[DrawingOperation]:
         """重做一步。"""
         op = self.history.redo()
         if op is not None:
-            self.signals.operation_added.emit(op)
+            self.signals.repaint.emit()
         return op
 
     def clear(self) -> None:

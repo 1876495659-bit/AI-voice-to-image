@@ -10,7 +10,7 @@ import datetime
 from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
@@ -83,7 +83,7 @@ class CommandHistoryPanel(QWidget):
             color = "#F87171"
 
         item = QListWidgetItem(display)
-        item.setForeground(Qt.GlobalColor.fromString(color))
+        item.setForeground(QColor(color))
 
         self.history_list.addItem(item)
         self.history_list.scrollToBottom()

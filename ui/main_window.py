@@ -228,6 +228,24 @@ class MainWindow(QMainWindow):
         self.engine.signals.canvas_cleared.connect(
             self.canvas.clear
         )
+    def _on_repaint(self) -> None:
+        """撤销/重做后重建画布操作列表。"""
+        self.canvas.clear()
+        for op in self.engine.get_history():
+            self.canvas._operations.append(op)
+        self.canvas.update()
+
+    def _connect_signals(self) -> None:
+        """连接各组件信号。"""
+        self.engine.signals.operation_added.connect(
+            self.canvas.add_operation
+        )
+        self.engine.signals.canvas_cleared.connect(
+            self.canvas.clear
+        )
+        self.engine.signals.repaint.connect(
+            self._on_repaint
+        )
 
     def _setup_shortcuts(self) -> None:
         esc = QAction(self)

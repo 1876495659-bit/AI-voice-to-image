@@ -59,7 +59,7 @@ SHAPE_PATTERNS: Dict[str, Pattern[str]] = {
         r"画[一条一]?[条根道][的]?(线|直线)[^(（]*$", re.IGNORECASE
     ),
     "freehand": re.compile(
-        r"(画|随便?|自由|自由自[在的])?[线線]?(条)?[^(（]*$",
+        r"(画[个只]?[的])?随便?[线線]?(条)?[^(（]*$",
     ),
 }
 

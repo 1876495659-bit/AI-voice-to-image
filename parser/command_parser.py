@@ -259,8 +259,13 @@ class CommandParser:
 
         if intent == "tool":
             ops.extend(self._build_tool_ops(slots))
+            # 如果同时有形状，也生成形状操作（组合命令）
+            if slots.get("shape"):
+                ops.extend(self._build_shape_ops(slots, text))
         elif intent == "color":
             ops.extend(self._build_color_ops(slots))
+            if slots.get("shape"):
+                ops.extend(self._build_shape_ops(slots, text))
         elif intent == "size":
             ops.extend(self._build_size_ops(slots))
         elif intent == "shape":
