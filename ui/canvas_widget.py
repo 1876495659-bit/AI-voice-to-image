@@ -53,6 +53,8 @@ class CanvasWidget(QWidget):
         super().__init__(parent)
 
         self._operations: List[DrawingOperation] = []
+        self._base_width = width
+        self._base_height = height
         self._zoom: int = 100
 
         self.setFixedSize(width, height)
@@ -85,7 +87,11 @@ class CanvasWidget(QWidget):
         return len(self._operations)
 
     def set_zoom(self, zoom: int) -> None:
-        self._zoom = zoom
+        self._zoom = max(10, min(300, zoom))
+        self.setFixedSize(
+            int(self._base_width * self._zoom / 100),
+            int(self._base_height * self._zoom / 100),
+        )
         self.update()
 
     # ── 内部 ──────────────────────────────────────────────
@@ -103,6 +109,7 @@ class CanvasWidget(QWidget):
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(self._zoom / 100, self._zoom / 100)
 
         # 1. 绘制网格背景
         self._draw_grid(painter)
@@ -129,6 +136,9 @@ class CanvasWidget(QWidget):
         spacing = 20
         w = self.width()
         h = self.height()
+        if self._zoom != 0:
+            w = self._base_width
+            h = self._base_height
 
         x = spacing
         while x < w:
@@ -146,9 +156,9 @@ class CanvasWidget(QWidget):
         pen = QPen(guide_color, 1, Qt.PenStyle.DashLine)
         painter.setPen(pen)
 
-        cx, cy = self.width() // 2, self.height() // 2
-        painter.drawLine(cx, 0, cx, self.height())
-        painter.drawLine(0, cy, self.width(), cy)
+        cx, cy = self._base_width // 2, self._base_height // 2
+        painter.drawLine(cx, 0, cx, self._base_height)
+        painter.drawLine(0, cy, self._base_width, cy)
 
     def _draw_stats(self, painter: QPainter) -> None:
         """左下角绘制操作数量统计。"""
@@ -156,7 +166,7 @@ class CanvasWidget(QWidget):
         font = painter.font()
         font.setPointSize(9)
         painter.setFont(font)
-        painter.drawText(10, self.height() - 10,
+        painter.drawText(10, self._base_height - 10,
                          f"操作: {len(self._operations)} 个")
 
     def _draw_operation(self, painter: QPainter, op: DrawingOperation) -> None:

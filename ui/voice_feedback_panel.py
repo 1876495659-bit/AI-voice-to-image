@@ -26,6 +26,7 @@ class VoiceFeedbackPanel(QWidget):
     """增强版语音反馈面板。"""
 
     execute_requested = pyqtSignal(str)
+    listen_requested = pyqtSignal()
 
     _BG = """
         QWidget {
@@ -101,11 +102,10 @@ class VoiceFeedbackPanel(QWidget):
         self.confidence_bar.setStyleSheet(self._progress_style("#00AA00"))
         layout.addWidget(self.confidence_bar)
 
-        self.execute_button = QPushButton("执行识别文本")
-        self.execute_button.setEnabled(False)
-        self.execute_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.execute_button.setFixedHeight(34)
-        self.execute_button.setStyleSheet("""
+        self.listen_button = QPushButton("开始语音识别")
+        self.listen_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.listen_button.setFixedHeight(40)
+        self.listen_button.setStyleSheet("""
             QPushButton {
                 background-color: #6C63FF;
                 color: #FFFFFF;
@@ -117,13 +117,9 @@ class VoiceFeedbackPanel(QWidget):
             QPushButton:hover {
                 background-color: #5544CC;
             }
-            QPushButton:disabled {
-                background-color: #3A3A50;
-                color: #777777;
-            }
         """)
-        self.execute_button.clicked.connect(self._emit_execute_requested)
-        layout.addWidget(self.execute_button)
+        self.listen_button.clicked.connect(self.listen_requested.emit)
+        layout.addWidget(self.listen_button)
 
         # --- 解析动作 ---
         self.action_label = QLabel("")
@@ -198,7 +194,6 @@ class VoiceFeedbackPanel(QWidget):
         else:
             color = "#F87171"
         self.confidence_bar.setStyleSheet(self._progress_style(color))
-        self.execute_button.setEnabled(bool(self._last_text))
         self._fade_timer.stop()
         self._fade_timer.start(3000)
 
@@ -217,14 +212,14 @@ class VoiceFeedbackPanel(QWidget):
         self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
-        self.execute_button.setEnabled(False)
+        self.listen_button.setText("停止语音识别")
 
     def show_silence(self) -> None:
-        self.text_label.setText("麦克风未连接")
+        self.text_label.setText("语音识别已停止")
         self.text_label.setStyleSheet("color: #777777; min-height: 36px;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
-        self.execute_button.setEnabled(False)
+        self.listen_button.setText("开始语音识别")
 
     def show_volume(self, rms: float) -> None:
         """显示音量（由 AudioBuffer.volume_changed 连接）。"""
@@ -234,7 +229,7 @@ class VoiceFeedbackPanel(QWidget):
         self.text_label.setText("")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
-        self.execute_button.setEnabled(False)
+        self.listen_button.setText("开始语音识别")
 
     def _fade_out(self) -> None:
         self.action_label.clear()
@@ -242,3 +237,6 @@ class VoiceFeedbackPanel(QWidget):
     def _emit_execute_requested(self) -> None:
         if self._last_text:
             self.execute_requested.emit(self._last_text)
+
+    def set_listening_active(self, active: bool) -> None:
+        self.listen_button.setText("停止语音识别" if active else "开始语音识别")

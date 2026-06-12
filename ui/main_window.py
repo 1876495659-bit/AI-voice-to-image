@@ -122,92 +122,46 @@ class MainWindow(QMainWindow):
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
         self.voice_service = VoiceService()
+        self._voice_listening_active = False
         self.parser = CommandParser(
             fallback_threshold=config.WHISPER_FALLBACK_THRESHOLD,
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
 
-        # 左侧工具栏
-        self.toolbar = Toolbar()
-
-        # 右侧主区域
         self.main_widget = QWidget()
         main_layout = QVBoxLayout(self.main_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
 
         # 语音反馈面板
         self.voice_panel = VoiceFeedbackPanel()
         main_layout.addWidget(self.voice_panel)
 
-        # 画布
-        self.canvas_frame = QFrame()
-        self.canvas_frame.setObjectName("canvasFrame")
-        canvas_layout = QVBoxLayout(self.canvas_frame)
-        canvas_layout.setContentsMargins(4, 4, 4, 4)
-
         self.canvas = CanvasWidget(
             width=config.CANVAS_DEFAULT_WIDTH,
             height=config.CANVAS_DEFAULT_HEIGHT,
         )
-        self.canvas.setMinimumSize(800, 500)
+        self.canvas.set_zoom(50)
 
-        # 画布缩放控制
-        self.zoom_label = QLabel("缩放: 100%")
-        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_slider.setRange(20, 300)
-        self.zoom_slider.setValue(100)
-        self.zoom_slider.setFixedHeight(24)
-        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
-
-        zoom_layout = QHBoxLayout()
-        zoom_layout.setContentsMargins(0, 2, 0, 0)
-        zoom_layout.addWidget(QLabel("缩放:"))
-        zoom_layout.addWidget(self.zoom_slider)
-        zoom_layout.addWidget(self.zoom_label)
-        zoom_layout.addStretch()
-        zoom_layout.addWidget(QLabel(f"画布: {config.CANVAS_DEFAULT_WIDTH}×{config.CANVAS_DEFAULT_HEIGHT}"))
-
-        canvas_layout.addWidget(self.canvas)
-        canvas_layout.addLayout(zoom_layout)
-        main_layout.addWidget(self.canvas_frame, stretch=1)
-
-        # 画布缩放 transform（简单实现：setMinimumSize 模拟）
-        self._current_zoom = 100
-
-        # 命令历史面板
-        self.history_panel = CommandHistoryPanel()
-        main_layout.addWidget(self.history_panel)
-
-        # 颜色面板
-        self.color_panel = ColorPalette()
-        self.color_panel.color_selected.connect(self._on_color_selected)
-        main_layout.addWidget(self.color_panel)
-
-        # 主布局
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(3)
-        splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background-color: {BORDER_LIGHT};
-                border-radius: 2px;
+        self.canvas_scroll = QScrollArea()
+        self.canvas_scroll.setWidget(self.canvas)
+        self.canvas_scroll.setWidgetResizable(False)
+        self.canvas_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.canvas_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {BG_DARK};
+                border: 1px solid {BORDER_LIGHT};
+                border-radius: 8px;
             }}
         """)
-        splitter.addWidget(self.toolbar)
-        splitter.addWidget(self.main_widget)
-        splitter.setSizes([180, 920])
+        main_layout.addWidget(self.canvas_scroll, stretch=1)
 
         central = QWidget()
         outer_layout = QVBoxLayout(central)
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(splitter)
+        outer_layout.addWidget(self.main_widget)
         self.setCentralWidget(central)
-
-        # 工具栏连接
-        self.toolbar.tool_selected.connect(self._on_tool_selected)
-        self.toolbar.action_clear.connect(self.engine.clear)
-        self.toolbar.action_undo.connect(self.engine.undo)
 
     def _on_repaint(self) -> None:
         """撤销/重做后重建画布操作列表。"""
@@ -222,10 +176,10 @@ class MainWindow(QMainWindow):
             self._on_transcription_ready
         )
         self.voice_service.signals.listening_started.connect(
-            self.voice_panel.show_listening
+            self._on_listening_started
         )
         self.voice_service.signals.listening_stopped.connect(
-            self.voice_panel.show_silence
+            self._on_listening_stopped
         )
         self.voice_service.signals.error.connect(
             self.voice_panel.show_error
@@ -233,8 +187,8 @@ class MainWindow(QMainWindow):
         self.voice_service.audio_buffer.volume_changed.connect(
             self.voice_panel.show_volume
         )
-        self.voice_panel.execute_requested.connect(
-            self._on_execute_requested
+        self.voice_panel.listen_requested.connect(
+            self._on_listen_requested
         )
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
@@ -271,9 +225,29 @@ class MainWindow(QMainWindow):
 
         self._execute_voice_text(text, confidence)
 
+    def _on_listening_started(self) -> None:
+        self._voice_listening_active = True
+        self.voice_panel.show_listening()
+
+    def _on_listening_stopped(self) -> None:
+        self._voice_listening_active = False
+        self.voice_panel.show_silence()
+
     def _on_execute_requested(self, text: str) -> None:
         """手动执行当前识别文本，绕过 Whisper 低置信门槛。"""
         self._execute_voice_text(text, 1.0, manual=True)
+
+    def _on_listen_requested(self) -> None:
+        """语音按钮切换监听状态。"""
+        if self._voice_listening_active or self.voice_service.is_listening:
+            self.voice_service.stop_listening()
+            self._voice_listening_active = False
+            self.voice_panel.set_listening_active(False)
+            return
+
+        if self.voice_service.start_listening():
+            self._voice_listening_active = True
+            self.voice_panel.set_listening_active(True)
 
     def _execute_voice_text(self, text: str, confidence: float, manual: bool = False) -> None:
         """解析并执行语音文本。"""
@@ -283,7 +257,6 @@ class MainWindow(QMainWindow):
             op_names = [op.op_type.name for op in result.operations]
             prefix = "手动执行: " if manual else ""
             self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
-            self.history_panel.add_entry(result)
         elif result.is_uncertain:
             if result.operations:
                 self.engine.execute_multiple(result.operations)
@@ -292,10 +265,8 @@ class MainWindow(QMainWindow):
                 self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
             else:
                 self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
-            self.history_panel.add_entry(result)
         else:
             self.voice_panel.show_error("未识别")
-            self.history_panel.add_entry(result)
 
     def _on_tool_selected(self, tool: str) -> None:
         """工具栏按钮触发工具切换。"""
@@ -311,14 +282,9 @@ class MainWindow(QMainWindow):
         """颜色面板选择。"""
         from engine.operations import ColorOperation
         self.engine.execute(ColorOperation(color=hex_color))
-        self.toolbar.set_current_color(hex_color)
 
     def _on_zoom_changed(self, value: int) -> None:
-        self._current_zoom = value
-        self.zoom_label.setText(f"缩放: {value}%")
-        w = int(config.CANVAS_DEFAULT_WIDTH * value / 100)
-        h = int(config.CANVAS_DEFAULT_HEIGHT * value / 100)
-        self.canvas.setMinimumSize(w, h)
+        self.canvas.set_zoom(value)
 
 
 # ── 左侧工具栏 ─────────────────────────────────────────────────

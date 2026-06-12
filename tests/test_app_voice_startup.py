@@ -39,13 +39,13 @@ class _FakeWindow:
         self.voice_panel = _FakeVoicePanel()
 
 
-def test_initialize_voice_starts_listening_after_model_load() -> None:
-    """Whisper 初始化成功后应立即开启麦克风监听。"""
+def test_initialize_voice_loads_model_without_starting_microphone() -> None:
+    """Whisper 初始化成功后等待用户点击按钮启动麦克风。"""
     window = _FakeWindow(can_initialize=True)
 
     assert initialize_voice(window) is True
     assert window.voice_service.initialize_called is True
-    assert window.voice_service.start_called is True
+    assert window.voice_service.start_called is False
     assert window.voice_panel.errors == []
 
 
@@ -60,6 +60,6 @@ def test_initialize_voice_reports_error_when_model_load_fails() -> None:
 
 
 if __name__ == "__main__":
-    test_initialize_voice_starts_listening_after_model_load()
+    test_initialize_voice_loads_model_without_starting_microphone()
     test_initialize_voice_reports_error_when_model_load_fails()
     print("test_app_voice_startup: OK")

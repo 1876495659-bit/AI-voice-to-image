@@ -19,8 +19,8 @@ def _app() -> QApplication:
     return app
 
 
-def test_transcription_signal_drives_canvas_and_history() -> None:
-    """语音识别结果应进入解析器、绘图引擎和命令历史。"""
+def test_transcription_signal_drives_canvas() -> None:
+    """语音识别结果应进入解析器、绘图引擎和画布。"""
     app = _app()
     window = MainWindow()
 
@@ -28,8 +28,8 @@ def test_transcription_signal_drives_canvas_and_history() -> None:
     window.voice_service.signals.transcription_ready.emit(command, 0.95)
 
     assert window.canvas.operation_count == 1
-    assert window.history_panel.entry_count == 1
     assert window.voice_panel.text_label.text() == command
+    assert "CIRCLE" in window.voice_panel.action_label.text()
     assert app is not None
 
 
@@ -42,31 +42,28 @@ def test_low_confidence_shape_command_still_draws_when_parse_is_clear() -> None:
     window.voice_service.signals.transcription_ready.emit(command, 0.49)
 
     assert window.canvas.operation_count == 1
-    assert window.history_panel.entry_count == 1
     assert window.voice_panel.text_label.text() == command
+    assert "CIRCLE" in window.voice_panel.action_label.text()
     assert app is not None
 
 
-def test_execute_button_runs_current_transcription_text() -> None:
-    """点击执行按钮应按当前显示的识别文本执行命令。"""
+def test_complex_transcription_executes_without_manual_button() -> None:
+    """复杂识别文本应自动解析执行。"""
     app = _app()
     window = MainWindow()
     command = "\u7528\u7ea2\u7b14\u753b\u4e00\u4e2a\u5706\u5708"
 
     window.voice_service.signals.transcription_ready.emit(command, 0.46)
+
     assert window.canvas.operation_count == 1
-    assert window.voice_panel.execute_button.isEnabled()
-
-    window.voice_panel.execute_button.click()
-
-    assert window.canvas.operation_count == 2
-    assert window.history_panel.entry_count == 2
-    assert "\u624b\u52a8\u6267\u884c" in window.voice_panel.action_label.text()
+    assert "COLOR" in window.voice_panel.action_label.text()
+    assert "PEN" in window.voice_panel.action_label.text()
+    assert "CIRCLE" in window.voice_panel.action_label.text()
     assert app is not None
 
 
 if __name__ == "__main__":
-    test_transcription_signal_drives_canvas_and_history()
+    test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
-    test_execute_button_runs_current_transcription_text()
+    test_complex_transcription_executes_without_manual_button()
     print("test_voice_integration: OK")

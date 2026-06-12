@@ -51,6 +51,19 @@ def test_canvas_draws_basic_shapes_without_qt_enum_errors() -> None:
     assert app is not None
 
 
+def test_canvas_zoom_changes_rendered_widget_size() -> None:
+    """画布缩放应改变实际显示尺寸。"""
+    app = _app()
+    canvas = CanvasWidget(width=1000, height=500)
+
+    canvas.set_zoom(50)
+
+    assert canvas.width() == 500
+    assert canvas.height() == 250
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_canvas_draws_basic_shapes_without_qt_enum_errors()
+    test_canvas_zoom_changes_rendered_widget_size()
     print("test_canvas_rendering: OK")

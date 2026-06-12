@@ -26,19 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_voice(window: Any) -> bool:
-    """初始化语音模型并在成功后立即开始监听。"""
+    """初始化语音模型，等待用户点击按钮开始监听。"""
     logger.info("正在初始化语音识别...")
     if not window.voice_service.initialize():
         logger.warning("语音识别初始化失败，仍可正常使用绘图功能")
         window.voice_panel.show_error("语音识别不可用，请检查 whisper 安装")
         return False
 
-    if not window.voice_service.start_listening():
-        logger.warning("麦克风监听启动失败")
-        window.voice_panel.show_error("麦克风启动失败，请检查设备和权限")
-        return False
-
-    logger.info("语音监听已启动")
+    logger.info("语音识别已就绪，等待用户点击按钮开始监听")
     return True
 
 
@@ -65,7 +60,7 @@ def main() -> None:
     # 创建并显示主窗口
     window = MainWindow()
 
-    # 初始化语音服务（加载 Whisper 模型并启动麦克风）
+    # 初始化语音服务（加载 Whisper 模型，麦克风由界面按钮启动）
     initialize_voice(window)
 
     window.show()
