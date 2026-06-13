@@ -47,6 +47,19 @@ from PyQt6.QtWidgets import (
 
 import config
 from engine.drawing_engine import DrawingEngine
+from engine.operations import (
+    AIImageOperation,
+    CircleOperation,
+    FreehandOperation,
+    LineDrawOperation,
+    MoveSelectedOperation,
+    RecolorSelectedOperation,
+    RectangleOperation,
+    ScaleSelectedOperation,
+    SelectLastOperation,
+    StarOperation,
+    TriangleOperation,
+)
 from parser import color_map
 from parser.command_parser import CommandParser
 from ui.canvas_widget import CanvasWidget
@@ -167,7 +180,9 @@ class MainWindow(QMainWindow):
         """撤销/重做后重建画布操作列表。"""
         self.canvas.clear()
         for op in self.engine.get_history():
-            self.canvas._operations.append(op)
+            if self._is_renderable_operation(op):
+                self.canvas._operations.append(op)
+        self.canvas.set_selected_operation(self.engine.selected_operation_id)
         self.canvas.update()
 
     def _connect_signals(self) -> None:
@@ -204,6 +219,12 @@ class MainWindow(QMainWindow):
         )
         self.engine.signals.repaint.connect(
             self._on_repaint
+        )
+        self.engine.signals.selection_changed.connect(
+            self.canvas.set_selected_operation
+        )
+        self.engine.signals.edit_failed.connect(
+            self.voice_panel.show_error
         )
 
     def _setup_shortcuts(self) -> None:
@@ -263,20 +284,70 @@ class MainWindow(QMainWindow):
         """解析并执行语音文本。"""
         result = self.parser.parse(text, confidence)
         if result.is_success:
+            if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
+                self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
+                return
             self.engine.execute_multiple(result.operations)
-            op_names = [op.op_type.name for op in result.operations]
             prefix = "手动执行: " if manual else ""
-            self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
+            self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
         elif result.is_uncertain:
             if result.operations:
+                if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
+                    self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
+                    return
                 self.engine.execute_multiple(result.operations)
-                op_names = [op.op_type.name for op in result.operations]
                 prefix = "手动执行: " if manual else "低置信已执行: "
-                self.voice_panel.show_action(f"{prefix}{', '.join(op_names)}")
+                self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
             else:
                 self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
         else:
             self.voice_panel.show_error("未识别")
+
+    def _describe_operations(self, operations) -> str:
+        """生成适合语音面板展示的动作说明。"""
+        if not operations:
+            return "未识别"
+
+        op = operations[-1]
+        if isinstance(op, MoveSelectedOperation):
+            if op.target_position is not None:
+                return "已将最近图形移动到指定位置"
+            if abs(op.dx) >= abs(op.dy):
+                direction = "右" if op.dx > 0 else "左"
+                amount = abs(op.dx)
+            else:
+                direction = "下" if op.dy > 0 else "上"
+                amount = abs(op.dy)
+            return f"已将最近图形向{direction}移动 {amount}px"
+        if isinstance(op, ScaleSelectedOperation):
+            if op.factor >= 1:
+                return f"已将最近图形放大 {int(round((op.factor - 1) * 100))}%"
+            return f"已将最近图形缩小 {int(round((1 - op.factor) * 100))}%"
+        if isinstance(op, RecolorSelectedOperation):
+            return "已修改最近图形颜色"
+        if isinstance(op, SelectLastOperation):
+            return "已选中最近图形"
+
+        return ", ".join(item.op_type.name for item in operations)
+
+    def _requires_edit_target(self, operations) -> bool:
+        return any(isinstance(op, (
+            MoveSelectedOperation,
+            RecolorSelectedOperation,
+            ScaleSelectedOperation,
+            SelectLastOperation,
+        )) for op in operations)
+
+    def _is_renderable_operation(self, operation) -> bool:
+        return isinstance(operation, (
+            AIImageOperation,
+            CircleOperation,
+            FreehandOperation,
+            LineDrawOperation,
+            RectangleOperation,
+            StarOperation,
+            TriangleOperation,
+        ))
 
     def _on_tool_selected(self, tool: str) -> None:
         """工具栏按钮触发工具切换。"""

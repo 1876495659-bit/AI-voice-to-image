@@ -62,8 +62,39 @@ def test_complex_transcription_executes_without_manual_button() -> None:
     assert app is not None
 
 
+def test_voice_edit_command_moves_recent_shape_and_updates_selection_feedback() -> None:
+    """语音编辑应作用于最近图形并显示中文反馈。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+    circle = window.engine.get_history()[0]
+    original_center = circle.center
+
+    window.voice_service.signals.transcription_ready.emit("把它往右移一点", 0.95)
+
+    assert circle.center == (original_center[0] + 40, original_center[1])
+    assert window.canvas.selected_operation_id == circle.id
+    assert "已将最近图形向右移动 40px" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
+def test_voice_edit_command_without_shape_keeps_error_feedback() -> None:
+    """没有图形时语音编辑应保留错误提示，不显示成功文案。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("把它往右移一点", 0.95)
+
+    assert window.canvas.operation_count == 0
+    assert "没有可编辑的图形" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
     test_complex_transcription_executes_without_manual_button()
+    test_voice_edit_command_moves_recent_shape_and_updates_selection_feedback()
+    test_voice_edit_command_without_shape_keeps_error_feedback()
     print("test_voice_integration: OK")

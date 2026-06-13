@@ -31,10 +31,14 @@ from engine.operations import (
     FreehandOperation,
     LineDrawOperation,
     LineTool,
+    MoveSelectedOperation,
     OperationType,
     PenTool,
+    RecolorSelectedOperation,
     PointLocation,
     RectangleOperation,
+    ScaleSelectedOperation,
+    SelectLastOperation,
     SizeOperation,
     StarOperation,
     TriangleOperation,
@@ -187,6 +191,10 @@ class CommandParser:
             意图键: "tool" / "color" / "size" / "shape" / "system" / "ai" / "unknown"
         """
         # AI 生成（最高优先级，因为可能包含"画"字）
+        if self._is_edit_command(text):
+            return "edit"
+
+        # AI 生成（最高优先级，因为可能包含"画"字）
         if is_ai_command(text):
             return "ai"
 
@@ -280,6 +288,8 @@ class CommandParser:
             ops.extend(self._build_system_ops(slots, text))
         elif intent == "ai":
             ops.extend(self._build_ai_ops(slots, text))
+        elif intent == "edit":
+            ops.extend(self._build_edit_ops(slots, text))
 
         # 组合操作：工具+颜色+形状，如"用红色画笔画个圆"
         # 如果同时有 tool + color + shape，额外生成颜色操作
@@ -385,6 +395,69 @@ class CommandParser:
         position = self._extract_position(text)
         pos = position if position else (self.canvas_width // 2 - 200, self.canvas_height // 2 - 200)
         return [AIImageOperation(prompt=prompt, position=pos)]
+
+    def _build_edit_ops(self, slots: dict, text: str) -> List[DrawingOperation]:
+        """生成当前/最近图形编辑操作。"""
+        if any(word in text for word in ("选中", "选择")):
+            return [SelectLastOperation()]
+
+        color_name = match_color(text)
+        if color_name and any(word in text for word in ("改", "换", "变")):
+            return [RecolorSelectedOperation(color=color_map.get_color(color_name))]
+
+        if any(word in text for word in ("变大", "放大", "大一点", "扩大")):
+            return [ScaleSelectedOperation(factor=self._extract_scale_factor(text, 1.15))]
+
+        if any(word in text for word in ("变小", "缩小", "小一点", "缩")):
+            return [ScaleSelectedOperation(factor=self._extract_scale_factor(text, 0.85))]
+
+        move = self._extract_move_operation(text)
+        return [move] if move is not None else []
+
+    def _is_edit_command(self, text: str) -> bool:
+        """判断是否是作用于最近图形的编辑命令。"""
+        if any(word in text for word in ("选中", "选择")):
+            return True
+        if any(word in text for word in ("移动", "移一点", "往左", "往右", "往上", "往下", "左移", "右移", "上移", "下移")):
+            return True
+        if any(word in text for word in ("变大", "变小", "放大", "缩小", "扩大", "小一点", "大一点")):
+            return True
+        return bool(match_color(text) and any(word in text for word in ("改", "换", "变")))
+
+    def _extract_move_operation(self, text: str) -> Optional[MoveSelectedOperation]:
+        """从语音文本提取移动操作。"""
+        position = self._extract_position(text)
+        if position and "移" in text and any(word in text for word in ("到", "至", "去")):
+            return MoveSelectedOperation(target_position=position)
+
+        distance = self._extract_number(text, default=40)
+        dx, dy = 0, 0
+        if any(word in text for word in ("往左", "向左", "左移", "左边")):
+            dx = -distance
+        elif any(word in text for word in ("往右", "向右", "右移", "右边")):
+            dx = distance
+        elif any(word in text for word in ("往上", "向上", "上移", "上面")):
+            dy = -distance
+        elif any(word in text for word in ("往下", "向下", "下移", "下面")):
+            dy = distance
+
+        if dx == 0 and dy == 0:
+            return None
+        return MoveSelectedOperation(dx=dx, dy=dy)
+
+    def _extract_scale_factor(self, text: str, default: float) -> float:
+        """提取缩放比例，没有数字时使用默认步进。"""
+        number = self._extract_number(text, default=0)
+        if "%" in text and number > 0:
+            amount = number / 100
+            return 1 + amount if default >= 1 else max(0.1, 1 - amount)
+        return default
+
+    def _extract_number(self, text: str, default: int) -> int:
+        match = NUMBER_PATTERN.search(text)
+        if not match:
+            return default
+        return max(1, int(match.group(1)))
 
     # --- 辅助方法 ---
 

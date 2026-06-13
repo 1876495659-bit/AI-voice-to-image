@@ -39,6 +39,12 @@ class OperationType(Enum):
     # AI 生成
     AI_IMAGE = auto()     # AI 生成图片
 
+    # 对象编辑
+    SELECT_LAST = auto()        # 选中最近图形
+    MOVE_SELECTED = auto()      # 移动当前/最近图形
+    SCALE_SELECTED = auto()     # 缩放当前/最近图形
+    RECOLOR_SELECTED = auto()   # 修改当前/最近图形颜色
+
     # 操作
     UNDO = auto()
     REDO = auto()
@@ -236,3 +242,44 @@ class AIImageOperation(DrawingOperation):
     prompt: str = ""
     image_bytes: bytes = b""
     position: tuple = field(default=(0, 0))
+
+
+@dataclass
+class SelectLastOperation(DrawingOperation):
+    """选中最近可编辑图形。"""
+
+    op_type: OperationType = field(default=OperationType.SELECT_LAST, init=False)
+
+
+@dataclass
+class MoveSelectedOperation(DrawingOperation):
+    """移动当前选中图形。"""
+
+    op_type: OperationType = field(default=OperationType.MOVE_SELECTED, init=False)
+    dx: int = 0
+    dy: int = 0
+    target_position: tuple | None = None
+    target_id: str = ""
+    before: DrawingOperation | None = None
+    after: DrawingOperation | None = None
+
+
+@dataclass
+class ScaleSelectedOperation(DrawingOperation):
+    """缩放当前选中图形。"""
+
+    op_type: OperationType = field(default=OperationType.SCALE_SELECTED, init=False)
+    factor: float = 1.0
+    target_id: str = ""
+    before: DrawingOperation | None = None
+    after: DrawingOperation | None = None
+
+
+@dataclass
+class RecolorSelectedOperation(DrawingOperation):
+    """修改当前选中图形颜色。"""
+
+    op_type: OperationType = field(default=OperationType.RECOLOR_SELECTED, init=False)
+    target_id: str = ""
+    before: DrawingOperation | None = None
+    after: DrawingOperation | None = None

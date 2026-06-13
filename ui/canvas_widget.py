@@ -56,6 +56,7 @@ class CanvasWidget(QWidget):
         self._base_width = width
         self._base_height = height
         self._zoom: int = 100
+        self._selected_operation_id: Optional[str] = None
 
         self.setFixedSize(width, height)
         self.setStyleSheet("""
@@ -76,6 +77,7 @@ class CanvasWidget(QWidget):
 
     def clear(self) -> None:
         self._operations.clear()
+        self._selected_operation_id = None
         self.update()
 
     @property
@@ -85,6 +87,14 @@ class CanvasWidget(QWidget):
     @property
     def operation_count(self) -> int:
         return len(self._operations)
+
+    @property
+    def selected_operation_id(self) -> Optional[str]:
+        return self._selected_operation_id
+
+    def set_selected_operation(self, operation_id: Optional[str]) -> None:
+        self._selected_operation_id = operation_id
+        self.update()
 
     def set_zoom(self, zoom: int) -> None:
         self._zoom = max(10, min(300, zoom))
@@ -102,6 +112,7 @@ class CanvasWidget(QWidget):
 
     def _clear_canvas(self) -> None:
         self._operations.clear()
+        self._selected_operation_id = None
         self.update()
 
     # ── QPainter 渲染 ─────────────────────────────────────
@@ -121,7 +132,10 @@ class CanvasWidget(QWidget):
         for op in self._operations:
             self._draw_operation(painter, op)
 
-        # 4. 操作数量统计
+        # 4. 绘制选中框
+        self._draw_selection(painter)
+
+        # 5. 操作数量统计
         self._draw_stats(painter)
 
         painter.end()
@@ -235,6 +249,51 @@ class CanvasWidget(QWidget):
                                    Qt.AspectRatioMode.KeepAspectRatio,
                                    Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(x, y, scaled)
+
+    def _draw_selection(self, painter: QPainter) -> None:
+        if not self._selected_operation_id:
+            return
+        target = next((op for op in self._operations if op.id == self._selected_operation_id), None)
+        if target is None:
+            return
+        bounds = self._selection_bounds(target)
+        if bounds is None:
+            return
+
+        x, y, w, h = bounds
+        pad = 8
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor("#6C63FF"), 2, Qt.PenStyle.DashLine))
+        painter.drawRect(x - pad, y - pad, w + pad * 2, h + pad * 2)
+        painter.restore()
+
+    def _selection_bounds(self, op: DrawingOperation) -> Optional[tuple]:
+        if isinstance(op, CircleOperation):
+            r = int(op.radius)
+            return op.center[0] - r, op.center[1] - r, r * 2, r * 2
+        if isinstance(op, RectangleOperation):
+            x, y = op.top_left
+            return x, y, op.bottom_right[0] - x, op.bottom_right[1] - y
+        if isinstance(op, TriangleOperation):
+            xs = [op.p1[0], op.p2[0], op.p3[0]]
+            ys = [op.p1[1], op.p2[1], op.p3[1]]
+            return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        if isinstance(op, StarOperation):
+            r = int(op.outer_radius)
+            return op.center[0] - r, op.center[1] - r, r * 2, r * 2
+        if isinstance(op, LineDrawOperation):
+            x1, y1 = op.start
+            x2, y2 = op.end
+            return min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)
+        if isinstance(op, FreehandOperation) and op.points:
+            xs = [p[0] for p in op.points]
+            ys = [p[1] for p in op.points]
+            return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        if isinstance(op, AIImageOperation):
+            x, y = op.position
+            return x, y, 400, 400
+        return None
 
     _draw_handlers = {
         OperationType.FREEHAND: _draw_freehand,
