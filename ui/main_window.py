@@ -21,7 +21,7 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QPalette
+from PyQt6.QtGui import QAction, QColor, QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -213,13 +213,15 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_shortcuts(self) -> None:
-        esc = self.addAction(QAction(self))
+        esc = QAction("Esc", self)
         esc.setShortcut("Esc")
         esc.triggered.connect(self.voice_service.stop_listening)
+        self.addAction(esc)
 
-        undo = self.addAction(QAction(self))
+        undo = QAction("Undo", self)
         undo.setShortcut("Ctrl+Z")
         undo.triggered.connect(self.engine.undo)
+        self.addAction(undo)
 
     # ── 信号处理 ──────────────────────────────────────────
 
