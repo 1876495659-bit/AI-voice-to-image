@@ -471,6 +471,16 @@ class CommandParser:
             return "below"
         if "里面" in text:
             return "inside"
+        # "三角形上" / "圆圈上" / "三角形下" / "圆圈下"
+        if re.search(r"[三角圆星矩线形圈](上)", text):
+            return "above"
+        if re.search(r"[三角圆星矩线形圈](下)", text):
+            return "below"
+        # "的下面"/"的上面"（带"的"的上下）
+        if "上面" in text and "的" in text:
+            return "above"
+        if "下面" in text and "的" in text:
+            return "below"
         # "的左边"/"的右边" 或 "三角形左边"/"三角形右边"（省略"的"）
         if "左边" in text:
             return "left"
