@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import copy
+import threading
 from typing import List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -102,6 +103,10 @@ class DrawingEngine:
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
         self.selected_operation_id: Optional[str] = None
+
+        # Agnes AI 生图服务
+        from ai.agnes_service import AgnesImageService
+        self.ai_service = AgnesImageService()
 
     # --- 核心操作 ---
 
@@ -237,6 +242,27 @@ class DrawingEngine:
         self.history.push(operation)
         self._set_selected_operation(operation.id)
         self.signals.operation_added.emit(operation)
+
+        # 异步调用 Agnes 生图
+        threading.Thread(
+            target=self._generate_ai_image,
+            args=(operation,),
+            daemon=True,
+        ).start()
+
+    def _generate_ai_image(self, operation: AIImageOperation) -> None:
+        """后台线程调用 Agnes 生成图片。
+
+        成功后更新 operation.image_bytes 并重绘画布。
+        失败时通过 edit_failed 信号通知 UI。
+        """
+        image_bytes = self.ai_service.generate_image(operation.prompt)
+        if image_bytes:
+            operation.image_bytes = image_bytes
+            self.signals.repaint.emit()
+        else:
+            # 在主线程中发出错误信号
+            self.signals.edit_failed.emit("AI 生成失败，请稍后重试")
 
     def _handle_clear(self, operation: DrawingOperation) -> None:
         """处理清空画布。"""
