@@ -41,13 +41,17 @@ class AgnesImageService(AIService):
         self._cache: dict[str, bytes] = {}
 
     SKETCH_PREFIX = (
-        "sketch style, hand-drawn pencil drawing, charcoal sketch, "
-        "rough edges, artistic illustration, white background, "
+        "cartoon illustration style, hand-drawn marker drawing, "
+        "cute cartoon character, thick colored marker lines, "
+        "simple cartoon style, clean white background, "
+        "vector sticker art, bold outlines, flat colors, "
+        "children's book illustration, no photorealistic, "
     )
 
     _SKETCH_WORDS = frozenset((
         "sketch", "drawing", "pencil", "hand-drawn", "charcoal",
-        "草图", "素描", "手绘", "素描画",
+        "cartoon", "marker", "illustration", "卡通",
+        "草图", "素描", "手绘", "素描画", "卡通画",
     ))
 
     def _enhance_for_sketch_style(self, prompt: str) -> str:
@@ -88,7 +92,7 @@ class AgnesImageService(AIService):
                 },
                 json={
                     "model": config.AGNES_IMAGE_MODEL,
-                    "prompt": prompt,
+                    "prompt": sketch_prompt,
                     "size": config.AGNES_IMAGE_SIZE,
                     "n": 1,
                 },
