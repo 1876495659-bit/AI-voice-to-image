@@ -1,46 +1,35 @@
-"""主窗口组装 — 美化版。
+"""主窗口 — 极简留白风格。
 
-新增可交互按钮：
-- 左侧工具栏：工具按钮（笔/橡皮/线条/画圆/画矩形/画三角形/画星/清空/撤销）
-- 底部颜色面板：30+ 颜色色块可点击选择
-- 画布缩放滑块 + 导航控制
-- 整体深色风格 + 圆角卡片布局
+仅保留两块内容：
+1. 中央白布（画布）
+2. 底部语音输入指示器（麦克风状态 + 识别文字）
+
+移除了：左侧工具栏、颜色面板、命令历史面板、音量柱状图、缩放滑块。
+所有交互通过语音完成。
 
 引用:
 - `engine/drawing_engine.py` — DrawingEngine 绘图引擎
 - `voice/voice_service.py` — VoiceService 语音服务
 - `parser/command_parser.py` — CommandParser 命令解析
-- `parser/color_map.py` — 颜色映射表（获取颜色名列表）
 - `ui/canvas_widget.py` — CanvasWidget 画布
 - `ui/voice_feedback_panel.py` — VoiceFeedbackPanel 语音反馈
-- `ui/command_history_panel.py` — CommandHistoryPanel 命令历史
-- `engine/operations.py` — 操作类
 """
 
 from __future__ import annotations
 
-import math
-from typing import Dict, List, Optional
+import logging
+from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPointF
-from PyQt6.QtGui import (
-    QAction,
-    QColor,
-    QFont,
-    QPalette,
-    QLinearGradient,
-)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QScrollArea,
-    QSlider,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -61,39 +50,37 @@ from engine.operations import (
     StarOperation,
     TriangleOperation,
 )
-from parser import color_map
 from parser.command_parser import CommandParser
 from ui.canvas_widget import CanvasWidget
-from ui.command_history_panel import CommandHistoryPanel
 from ui.voice_feedback_panel import VoiceFeedbackPanel
 from voice.voice_service import VoiceService
 
-# ── 工具栏颜色 ───────────────────────────────────────────────
-BG_DARK = "#1E1E2E"
-BG_CARD = "#2A2A3C"
-BG_HOVER = "#3A3A50"
-ACCENT = "#6C63FF"
-ACCENT_PRESSED = "#5544CC"
-TEXT_PRIMARY = "#EAEAEA"
-TEXT_SECONDARY = "#AAAAAA"
-TEXT_DIM = "#777777"
-BORDER_LIGHT = "#3A3A4C"
+logger = logging.getLogger(__name__)
+
+# ── 极简配色 ───────────────────────────────────────────────
+BG = "#F5F5F7"          # Apple 浅灰背景
+WHITE = "#FFFFFF"        # 画布白
+INK = "#1D1D1F"          # 主文字（Apple 深灰）
+MUTED = "#86868B"        # 次要文字
+ACCENT = "#0071E3"       # Apple 蓝
+ACCENT_SOFT = "#E8F2FF"  # 蓝色浅底
+BORDER = "#D2D2D7"       # 微妙边框
 
 
 class MainWindow(QMainWindow):
-    """主窗口 — 深色主题 + 工具栏 + 颜色面板 + 画布缩放。
+    """极简语音绘图窗口。
 
-    布局（从左到右）:
-        ┌──────┬──────────────────────────────┐
-        │工具栏│  语音反馈面板                 │
-        ├──────┼──────────────────────────────┤
-        │      │  画布 + 缩放控制              │
-        │      │                              │
-        ├──────┤                              │
-        │      │  命令历史面板                 │
-        ├──────┤                              │
-        │      │  颜色面板（30+ 色块）         │
-        └──────┴──────────────────────────────┘
+    布局:
+        ┌─────────────────────────────────┐
+        │                                 │
+        │         白布（画布）             │
+        │                                 │
+        │                                 │
+        ├─────────────────────────────────┤
+        │   🎤  请说话...                  │
+        │   ━━━━━━━━━━━━━━━━━━━━ 进度条    │
+        │   [ 开始语音识别 ]               │
+        └─────────────────────────────────┘
     """
 
     def __init__(self) -> None:
@@ -107,30 +94,24 @@ class MainWindow(QMainWindow):
     # ── 窗口 ────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("AI 语音绘图")
-        self.setMinimumSize(1100, 700)
-        self.resize(1600, 950)
+        self.setWindowTitle("语音绘图")
+        self.setMinimumSize(960, 640)
+        self.resize(1280, 860)
 
-        # 深色主题
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.Window, QColor(BG))
         self.setPalette(palette)
 
         self.setStyleSheet(f"""
-            QMainWindow, QFrame {{
-                background-color: {BG_DARK};
-            }}
-            QFrame#canvasFrame {{
-                background-color: #FFFFFF;
-                border: 2px solid {BORDER_LIGHT};
-                border-radius: 8px;
+            QMainWindow {{
+                background-color: {BG};
             }}
         """)
 
     # ── 组件 ────────────────────────────────────────────────
 
     def _create_components(self) -> None:
-        # 引擎
+        # 引擎 + 服务
         self.engine = DrawingEngine(
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
@@ -143,15 +124,7 @@ class MainWindow(QMainWindow):
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
 
-        self.main_widget = QWidget()
-        main_layout = QVBoxLayout(self.main_widget)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
-
-        # 语音反馈面板
-        self.voice_panel = VoiceFeedbackPanel()
-        main_layout.addWidget(self.voice_panel)
-
+        # 画布（白布）
         self.canvas = CanvasWidget(
             width=config.CANVAS_DEFAULT_WIDTH,
             height=config.CANVAS_DEFAULT_HEIGHT,
@@ -164,30 +137,41 @@ class MainWindow(QMainWindow):
         self.canvas_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.canvas_scroll.setStyleSheet(f"""
             QScrollArea {{
-                background-color: {BG_DARK};
-                border: 1px solid {BORDER_LIGHT};
-                border-radius: 8px;
+                background-color: {BG};
+                border: none;
             }}
         """)
-        main_layout.addWidget(self.canvas_scroll, stretch=1)
 
+        # 语音反馈面板
+        self.voice_panel = VoiceFeedbackPanel()
+
+        # 主布局
         central = QWidget()
-        outer_layout = QVBoxLayout(central)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(self.main_widget)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # 画布区域
+        canvas_frame = QFrame()
+        canvas_frame.setObjectName("canvasFrame")
+        canvas_frame.setStyleSheet(f"""
+            #canvasFrame {{
+                background-color: {WHITE};
+                border: 1px solid {BORDER};
+                border-radius: 16px;
+            }}
+        """)
+        canvas_inner = QVBoxLayout(canvas_frame)
+        canvas_inner.setContentsMargins(0, 0, 0, 0)
+        canvas_inner.addWidget(self.canvas_scroll)
+        layout.addWidget(canvas_frame, stretch=1)
+
+        # 语音面板
+        layout.addWidget(self.voice_panel)
+
         self.setCentralWidget(central)
 
-    def _on_repaint(self) -> None:
-        """撤销/重做后重建画布操作列表。"""
-        self.canvas.clear()
-        for op in self.engine.get_history():
-            if self._is_renderable_operation(op):
-                self.canvas._operations.append(op)
-        self.canvas.set_selected_operation(self.engine.selected_operation_id)
-        self.canvas.update()
-
     def _connect_signals(self) -> None:
-        """连接各组件信号。"""
         self.voice_service.signals.transcription_ready.connect(
             self._on_transcription_ready
         )
@@ -229,15 +213,13 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_shortcuts(self) -> None:
-        esc = QAction(self)
+        esc = self.addAction(QAction(self))
         esc.setShortcut("Esc")
         esc.triggered.connect(self.voice_service.stop_listening)
-        self.addAction(esc)
 
-        undo = QAction(self)
+        undo = self.addAction(QAction(self))
         undo.setShortcut("Ctrl+Z")
         undo.triggered.connect(self.engine.undo)
-        self.addAction(undo)
 
     # ── 信号处理 ──────────────────────────────────────────
 
@@ -262,11 +244,9 @@ class MainWindow(QMainWindow):
         self.voice_panel.show_silence()
 
     def _on_execute_requested(self, text: str) -> None:
-        """手动执行当前识别文本，绕过 Whisper 低置信门槛。"""
         self._execute_voice_text(text, 1.0, manual=True)
 
     def _on_listen_requested(self) -> None:
-        """语音按钮切换监听状态。"""
         if self._voice_listening_active or self.voice_service.is_listening:
             self.voice_service.stop_listening()
             self._voice_listening_active = False
@@ -282,14 +262,13 @@ class MainWindow(QMainWindow):
             self.voice_panel.set_listening_active(True)
 
     def _execute_voice_text(self, text: str, confidence: float, manual: bool = False) -> None:
-        """解析并执行语音文本。"""
         result = self.parser.parse(text, confidence)
         if result.is_success:
             if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
                 self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
                 return
             self.engine.execute_multiple(result.operations)
-            prefix = "手动执行: " if manual else ""
+            prefix = "已执行: " if not manual else "手动执行: "
             self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
         elif result.is_uncertain:
             if result.operations:
@@ -305,31 +284,30 @@ class MainWindow(QMainWindow):
             self.voice_panel.show_error("未识别")
 
     def _describe_operations(self, operations) -> str:
-        """生成适合语音面板展示的动作说明。"""
         if not operations:
             return "未识别"
 
         op = operations[-1]
         if isinstance(op, MoveSelectedOperation):
             if op.target_position is not None:
-                return "已将最近图形移动到指定位置"
+                return "已将图形移动到指定位置"
             if abs(op.dx) >= abs(op.dy):
                 direction = "右" if op.dx > 0 else "左"
                 amount = abs(op.dx)
             else:
                 direction = "下" if op.dy > 0 else "上"
                 amount = abs(op.dy)
-            return f"已将最近图形向{direction}移动 {amount}px"
+            return f"已将图形向{direction}移动 {amount}px"
         if isinstance(op, ScaleSelectedOperation):
             if op.factor >= 1:
-                return f"已将最近图形放大 {int(round((op.factor - 1) * 100))}%"
-            return f"已将最近图形缩小 {int(round((1 - op.factor) * 100))}%"
+                return f"已将图形放大 {int(round((op.factor - 1) * 100))}%"
+            return f"已将图形缩小 {int(round((1 - op.factor) * 100))}%"
         if isinstance(op, RecolorSelectedOperation):
-            return "已修改最近图形颜色"
+            return "已修改图形颜色"
         if isinstance(op, DeleteSelectedOperation):
-            return "已删除最近图形"
+            return "已删除图形"
         if isinstance(op, SelectLastOperation):
-            return "已选中最近图形"
+            return "已选中图形"
 
         return ", ".join(item.op_type.name for item in operations)
 
@@ -342,6 +320,14 @@ class MainWindow(QMainWindow):
             DeleteSelectedOperation,
         )) for op in operations)
 
+    def _on_repaint(self) -> None:
+        self.canvas.clear()
+        for op in self.engine.get_history():
+            if self._is_renderable_operation(op):
+                self.canvas._operations.append(op)
+        self.canvas.set_selected_operation(self.engine.selected_operation_id)
+        self.canvas.update()
+
     def _is_renderable_operation(self, operation) -> bool:
         return isinstance(operation, (
             AIImageOperation,
@@ -353,268 +339,11 @@ class MainWindow(QMainWindow):
             TriangleOperation,
         ))
 
-    def _on_tool_selected(self, tool: str) -> None:
-        """工具栏按钮触发工具切换。"""
-        from engine.operations import PenTool, EraserTool, LineTool
-        if tool == "pen":
-            self.engine.execute(PenTool())
-        elif tool == "eraser":
-            self.engine.execute(EraserTool())
-        elif tool == "line":
-            self.engine.execute(LineTool())
-
-    def _on_color_selected(self, hex_color: str, color_name: str) -> None:
-        """颜色面板选择。"""
-        from engine.operations import ColorOperation
-        self.engine.execute(ColorOperation(color=hex_color))
-
-    def _on_zoom_changed(self, value: int) -> None:
-        self.canvas.set_zoom(value)
-
-
-# ── 左侧工具栏 ─────────────────────────────────────────────────
-
-class Toolbar(QFrame):
-    """左侧垂直工具栏。"""
-
-    tool_selected = pyqtSignal(str)
-    action_clear = pyqtSignal()
-    action_undo = pyqtSignal()
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("toolbarFrame")
-        self.setStyleSheet(f"""
-            #toolbarFrame {{
-                background-color: {BG_CARD};
-                border: none;
-                border-radius: 6px;
-            }}
-        """)
-
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 12)
-        layout.setSpacing(6)
-
-        # 标题
-        title = QLabel("工具")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; padding: 4px 0;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        layout.addSpacing(4)
-
-        # 绘图工具组
-        group_label = QLabel("绘图工具")
-        group_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(group_label)
-
-        self._add_tool_button("✏️ 画笔", "pen", icon="🖊️")
-        self._add_tool_button("🧹 橡皮", "eraser", icon="🧽")
-        self._add_tool_button("📏 线条", "line", icon="📐")
-        layout.addSpacing(4)
-
-        # 形状工具组
-        shape_label = QLabel("形状工具")
-        shape_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(shape_label)
-
-        self._add_shape_button("⭕ 圆形", "画个圆")
-        self._add_shape_button("🟦 矩形", "画个矩形")
-        self._add_shape_button("🔺 三角形", "画个三角形")
-        self._add_shape_button("⭐ 星形", "画个星")
-        layout.addSpacing(4)
-
-        # 操作组
-        action_label = QLabel("操作")
-        action_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(action_label)
-
-        self._add_action_button("↩ 撤销", self._on_undo)
-        self._add_action_button("🗑 清空", self._on_clear, accent=True)
-        self._add_action_button("📷 AI 生成", "generate")
-        layout.addSpacing(8)
-        layout.addStretch()
-
-        # 当前颜色指示
-        self._color_row = QLabel("当前颜色: 黑色")
-        self._color_row.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; padding: 4px 0;")
-        self._color_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._color_row)
-
-        self._color_indicator = QLabel("■")
-        self._color_indicator.setFixedSize(20, 20)
-        self._color_indicator.setStyleSheet(
-            f"color: {ACCENT}; font-size: 18px; font-weight: bold;"
-        )
-        self._color_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._color_indicator, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def _add_tool_button(self, text: str, tool: str, icon: str = "") -> None:
-        btn = self._make_button(f"{icon} {text}", self._on_tool, tool)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
-
-    def _add_shape_button(self, text: str, command: str) -> None:
-        btn = self._make_button(text, self._on_shape, command)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
-
-    def _add_action_button(self, text: str, payload, accent: bool = False) -> None:
-        btn = self._make_button(text, self._on_action, payload, accent)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
-
-    def _make_button(self, text: str, handler, payload=None, accent: bool = False) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setFixedHeight(36)
-        btn.setFixedWidth(160)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(self._btn_style(accent))
-
-        # 用 lambda 捕获，避免 clicked(bool) 信号传 bool 导致类型错误
-        def _wrap(_=None, _h=handler, _p=payload, _b=btn):
-            _h(_p)
-            # 工具按钮高亮
-            if _p in ("pen", "eraser", "line"):
-                _b.setStyleSheet(self._btn_style(True))
-        btn.clicked.connect(_wrap)
-        return btn
-
-    def _btn_style(self, active: bool = False) -> str:
-        bg = ACCENT if active else BG_HOVER
-        text_color = "#FFFFFF" if active else TEXT_PRIMARY
-        return f"""
-            QPushButton {{
-                background-color: {bg};
-                color: {text_color};
-                border: none;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-                padding: 4px 10px;
-            }}
-            QPushButton:hover {{
-                background-color: {ACCENT_PRESSED};
-            }}
-            QPushButton:pressed {{
-                background-color: {ACCENT};
-            }}
-        """
-
-    def _on_tool(self, tool: str) -> None:
-        self.tool_selected.emit(tool)
-
-    def _on_shape(self, command: str) -> None:
-        self.tool_selected.emit(f"shape:{command}")
-
-    def _on_undo(self) -> None:
-        self.action_undo.emit()
-
-    def _on_clear(self) -> None:
-        self.action_clear.emit()
-
-    def _on_action(self, payload) -> None:
-        if payload == "generate":
-            self.tool_selected.emit("ai:生成一幅美丽的风景画")
-
-    def set_current_color(self, hex_color: str) -> None:
-        name = color_map.get_color(hex_color)
-        self._color_row.setText(f"当前颜色: {name}")
-        self._color_indicator.setStyleSheet(
-            f"background-color: {hex_color}; "
-            f"border: 2px solid {TEXT_DIM}; "
-            f"border-radius: 4px; "
-            f"font-size: 0px;"
-        )
-
-
-# ── 颜色面板 ─────────────────────────────────────────────────
-
-class ColorPalette(QWidget):
-    """底部颜色面板，30+ 颜色可点击。"""
-
-    color_selected = pyqtSignal(str, str)  # hex, name
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-
-        title = QLabel("颜色选择")
-        title.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0;")
-        layout.addWidget(title)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setMaximumHeight(80)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollBar:horizontal {{
-                background: {BG_CARD};
-                height: 6px;
-                border-radius: 3px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {BORDER_LIGHT};
-                border-radius: 3px;
-            }}
-        """)
-
-        self._color_grid = QWidget()
-        grid_layout = QHBoxLayout(self._color_grid)
-        grid_layout.setContentsMargins(4, 2, 4, 2)
-        grid_layout.setSpacing(3)
-
-        self._buttons: List[tuple] = []  # (btn, hex, name)
-
-        for name, hex_color in color_map.COLOR_MAP.items():
-            btn = QPushButton()
-            btn.setFixedSize(28, 28)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(name)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {hex_color};
-                    border: 2px solid {BORDER_LIGHT};
-                    border-radius: 14px;
-                }}
-                QPushButton:hover {{
-                    border-color: {ACCENT};
-                }}
-                QPushButton:pressed {{
-                    border-color: #FFFFFF;
-                }}
-            """)
-            btn.clicked.connect(lambda _=None, _hex=hex_color, _name=name: self._on_color(_hex, _name))
-            grid_layout.addWidget(btn)
-            self._buttons.append((btn, hex_color, name))
-
-        scroll.setWidget(self._color_grid)
-        layout.addWidget(scroll)
-
-    def _on_color(self, hex_color: str, name: str) -> None:
-        self.color_selected.emit(hex_color, name)
-
 
 if __name__ == "__main__":
     import sys
     app = QApplication(sys.argv)
+    app.setApplicationName("语音绘图")
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
