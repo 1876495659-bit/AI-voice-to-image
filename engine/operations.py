@@ -44,6 +44,7 @@ class OperationType(Enum):
     MOVE_SELECTED = auto()      # 移动当前/最近图形
     SCALE_SELECTED = auto()     # 缩放当前/最近图形
     RECOLOR_SELECTED = auto()   # 修改当前/最近图形颜色
+    DELETE_SELECTED = auto()    # 删除当前/最近图形
 
     # 操作
     UNDO = auto()
@@ -283,3 +284,13 @@ class RecolorSelectedOperation(DrawingOperation):
     target_id: str = ""
     before: DrawingOperation | None = None
     after: DrawingOperation | None = None
+
+
+@dataclass
+class DeleteSelectedOperation(DrawingOperation):
+    """删除当前选中图形。"""
+
+    op_type: OperationType = field(default=OperationType.DELETE_SELECTED, init=False)
+    target_id: str = ""
+    deleted_operation: DrawingOperation | None = None
+    deleted_index: int = -1

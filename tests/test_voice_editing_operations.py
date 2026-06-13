@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.drawing_engine import DrawingEngine
 from engine.operations import (
     CircleOperation,
+    DeleteSelectedOperation,
     MoveSelectedOperation,
     OperationType,
     RecolorSelectedOperation,
@@ -64,6 +65,16 @@ def test_parser_understands_scale_and_recolor_commands() -> None:
     assert recolor.color == "#FF0000"
 
 
+def test_parser_understands_delete_selected_commands() -> None:
+    """理解删除当前/最近图形的语音。"""
+    parser = CommandParser(canvas_width=1920, canvas_height=1080)
+
+    delete = parser.parse("删除这个正方形", 0.95).operations[0]
+
+    assert isinstance(delete, DeleteSelectedOperation)
+    assert delete.op_type == OperationType.DELETE_SELECTED
+
+
 def test_engine_auto_selects_and_moves_recent_shape() -> None:
     """新建图形后自动选中，移动命令会改变其位置。"""
     engine = DrawingEngine(canvas_width=1920, canvas_height=1080)
@@ -107,6 +118,26 @@ def test_engine_undo_redo_reverts_selected_edit() -> None:
     assert engine.selected_operation_id == circle.id
 
 
+def test_engine_deletes_selected_shape_and_restores_with_undo() -> None:
+    """删除当前图形后应从历史移除，并可撤销恢复。"""
+    engine = DrawingEngine(canvas_width=1920, canvas_height=1080)
+    circle = CircleOperation(center=(100, 100), radius=30)
+    engine.execute(circle)
+
+    engine.execute(DeleteSelectedOperation())
+
+    assert all(op.id != circle.id for op in engine.get_history())
+    assert engine.selected_operation_id is None
+
+    engine.undo()
+    assert any(op.id == circle.id for op in engine.get_history())
+    assert engine.selected_operation_id == circle.id
+
+    engine.redo()
+    assert all(op.id != circle.id for op in engine.get_history())
+    assert engine.selected_operation_id is None
+
+
 def test_engine_edit_without_target_reports_failure() -> None:
     """没有图形时编辑命令不崩溃，并给出错误反馈。"""
     engine = DrawingEngine(canvas_width=1920, canvas_height=1080)
@@ -137,9 +168,11 @@ def test_canvas_tracks_selected_operation_id() -> None:
 if __name__ == "__main__":
     test_parser_understands_move_selected_commands()
     test_parser_understands_scale_and_recolor_commands()
+    test_parser_understands_delete_selected_commands()
     test_engine_auto_selects_and_moves_recent_shape()
     test_engine_scales_and_recolors_selected_shape()
     test_engine_undo_redo_reverts_selected_edit()
+    test_engine_deletes_selected_shape_and_restores_with_undo()
     test_engine_edit_without_target_reports_failure()
     test_canvas_tracks_selected_operation_id()
     print("test_voice_editing_operations: OK")

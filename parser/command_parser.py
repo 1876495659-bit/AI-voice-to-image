@@ -26,6 +26,7 @@ from engine.operations import (
     AIImageOperation,
     CircleOperation,
     ColorOperation,
+    DeleteSelectedOperation,
     DrawingOperation,
     EraserTool,
     FreehandOperation,
@@ -401,6 +402,9 @@ class CommandParser:
         if any(word in text for word in ("选中", "选择")):
             return [SelectLastOperation()]
 
+        if self._is_delete_selected_command(text):
+            return [DeleteSelectedOperation()]
+
         color_name = match_color(text)
         if color_name and any(word in text for word in ("改", "换", "变")):
             return [RecolorSelectedOperation(color=color_map.get_color(color_name))]
@@ -418,11 +422,19 @@ class CommandParser:
         """判断是否是作用于最近图形的编辑命令。"""
         if any(word in text for word in ("选中", "选择")):
             return True
+        if self._is_delete_selected_command(text):
+            return True
         if any(word in text for word in ("移动", "移一点", "往左", "往右", "往上", "往下", "左移", "右移", "上移", "下移")):
             return True
         if any(word in text for word in ("变大", "变小", "放大", "缩小", "扩大", "小一点", "大一点")):
             return True
         return bool(match_color(text) and any(word in text for word in ("改", "换", "变")))
+
+    def _is_delete_selected_command(self, text: str) -> bool:
+        """判断是否是删除当前/最近图形。"""
+        if not any(word in text for word in ("删除", "删掉", "去掉", "移除", "删了", "删")):
+            return False
+        return any(word in text for word in ("它", "这个", "当前", "最近", "上一个", "图形", "正方形", "方形", "矩形", "圆", "圈", "三角", "星"))
 
     def _extract_move_operation(self, text: str) -> Optional[MoveSelectedOperation]:
         """从语音文本提取移动操作。"""

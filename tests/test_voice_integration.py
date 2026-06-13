@@ -91,10 +91,27 @@ def test_voice_edit_command_without_shape_keeps_error_feedback() -> None:
     assert app is not None
 
 
+def test_voice_delete_command_removes_recent_shape() -> None:
+    """语音删除应移除最近选中的图形。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个正方形", 0.95)
+    assert window.canvas.operation_count == 1
+
+    window.voice_service.signals.transcription_ready.emit("删除这个正方形", 0.34)
+
+    assert window.canvas.operation_count == 0
+    assert window.canvas.selected_operation_id is None
+    assert "已删除最近图形" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
     test_complex_transcription_executes_without_manual_button()
     test_voice_edit_command_moves_recent_shape_and_updates_selection_feedback()
     test_voice_edit_command_without_shape_keeps_error_feedback()
+    test_voice_delete_command_removes_recent_shape()
     print("test_voice_integration: OK")

@@ -23,6 +23,7 @@ from engine.operations import (
     AIImageOperation,
     CircleOperation,
     ColorOperation,
+    DeleteSelectedOperation,
     DrawingOperation,
     EraserTool,
     FreehandOperation,
@@ -318,6 +319,26 @@ class DrawingEngine:
         self._set_selected_operation(target.id)
         self.signals.repaint.emit()
 
+    def _handle_delete_selected(self, operation: DeleteSelectedOperation) -> None:
+        """删除当前选中图形。"""
+        target = self._resolve_edit_target()
+        if target is None:
+            self.signals.edit_failed.emit("没有可编辑的图形，请先画一个图形")
+            return
+
+        removed = self._remove_operation_from_history(target.id)
+        if removed is None:
+            self.signals.edit_failed.emit("当前对象暂不支持该编辑")
+            return
+
+        deleted_operation, deleted_index = removed
+        operation.target_id = target.id
+        operation.deleted_operation = copy.deepcopy(deleted_operation)
+        operation.deleted_index = deleted_index
+        self.history.push(operation)
+        self._refresh_selection_after_history_change()
+        self.signals.repaint.emit()
+
     def _emit_state_changed(self) -> None:
         """发出状态变更信号。"""
         self.signals.state_changed.emit(
@@ -350,6 +371,18 @@ class DrawingEngine:
             if self._is_editable_operation(op):
                 return op
         return None
+
+    def _remove_operation_from_history(self, operation_id: str) -> Optional[tuple]:
+        stack = self.history._undo_stack
+        for index, op in enumerate(stack):
+            if op.id == operation_id:
+                return stack.pop(index), index
+        return None
+
+    def _insert_operation_into_history(self, operation: DrawingOperation, index: int) -> None:
+        stack = self.history._undo_stack
+        safe_index = max(0, min(index, len(stack)))
+        stack.insert(safe_index, operation)
 
     def _refresh_selection_after_history_change(self, preferred_id: Optional[str] = None) -> None:
         if preferred_id:
@@ -472,6 +505,14 @@ class DrawingEngine:
         )
 
     def _revert_edit_operation(self, operation: DrawingOperation) -> None:
+        if isinstance(operation, DeleteSelectedOperation):
+            if operation.deleted_operation is not None:
+                self._insert_operation_into_history(
+                    copy.deepcopy(operation.deleted_operation),
+                    operation.deleted_index,
+                )
+            return
+
         before = getattr(operation, "before", None)
         target_id = self._edit_target_id(operation)
         if before is not None and target_id:
@@ -480,6 +521,11 @@ class DrawingEngine:
                 self._copy_operation_state(before, target)
 
     def _apply_edit_after(self, operation: DrawingOperation) -> None:
+        if isinstance(operation, DeleteSelectedOperation):
+            if operation.target_id:
+                self._remove_operation_from_history(operation.target_id)
+            return
+
         after = getattr(operation, "after", None)
         target_id = self._edit_target_id(operation)
         if after is not None and target_id:
@@ -513,6 +559,7 @@ class DrawingEngine:
         OperationType.MOVE_SELECTED: _handle_move_selected,
         OperationType.SCALE_SELECTED: _handle_scale_selected,
         OperationType.RECOLOR_SELECTED: _handle_recolor_selected,
+        OperationType.DELETE_SELECTED: _handle_delete_selected,
         OperationType.CLEAR: _handle_clear,
         OperationType.UNDO: _handle_undo,
         OperationType.REDO: _handle_redo,

@@ -50,6 +50,7 @@ from engine.drawing_engine import DrawingEngine
 from engine.operations import (
     AIImageOperation,
     CircleOperation,
+    DeleteSelectedOperation,
     FreehandOperation,
     LineDrawOperation,
     MoveSelectedOperation,
@@ -325,6 +326,8 @@ class MainWindow(QMainWindow):
             return f"已将最近图形缩小 {int(round((1 - op.factor) * 100))}%"
         if isinstance(op, RecolorSelectedOperation):
             return "已修改最近图形颜色"
+        if isinstance(op, DeleteSelectedOperation):
+            return "已删除最近图形"
         if isinstance(op, SelectLastOperation):
             return "已选中最近图形"
 
@@ -336,6 +339,7 @@ class MainWindow(QMainWindow):
             RecolorSelectedOperation,
             ScaleSelectedOperation,
             SelectLastOperation,
+            DeleteSelectedOperation,
         )) for op in operations)
 
     def _is_renderable_operation(self, operation) -> bool:
