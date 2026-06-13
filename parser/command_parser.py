@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import List, Optional
@@ -24,6 +25,7 @@ from typing import List, Optional
 import config
 from engine.operations import (
     AIImageOperation,
+    AnchorShapeOperation,
     CircleOperation,
     ColorOperation,
     DeleteSelectedOperation,
@@ -46,7 +48,10 @@ from engine.operations import (
 )
 from parser import color_map
 from parser.command_grammar import (
+    ANCHOR_SHAPE_PATTERN,
     NUMBER_PATTERN,
+    RELATIVE_MOVE_PATTERN,
+    SHAPE_PATTERNS,
     match_color,
     match_shape,
     match_size,
@@ -191,6 +196,14 @@ class CommandParser:
         Returns:
             意图键: "tool" / "color" / "size" / "shape" / "system" / "ai" / "unknown"
         """
+        # 新增：以已有图形为参照定位 — 最高优先级
+        if ANCHOR_SHAPE_PATTERN.search(text):
+            return "anchor"
+
+        # 新增：相对位置移动 — 最高优先级（防止"直线"等词被误匹配为工具）
+        if RELATIVE_MOVE_PATTERN.search(text):
+            return "edit"
+
         # AI 生成（最高优先级，因为可能包含"画"字）
         if self._is_edit_command(text):
             return "edit"
@@ -289,6 +302,8 @@ class CommandParser:
             ops.extend(self._build_system_ops(slots, text))
         elif intent == "ai":
             ops.extend(self._build_ai_ops(slots, text))
+        elif intent == "anchor":
+            ops.extend(self._build_anchor_ops(slots, text))
         elif intent == "edit":
             ops.extend(self._build_edit_ops(slots, text))
 
@@ -416,10 +431,57 @@ class CommandParser:
             return [ScaleSelectedOperation(factor=self._extract_scale_factor(text, 0.85))]
 
         move = self._extract_move_operation(text)
-        return [move] if move is not None else []
+        if move is not None:
+            shape, color = self._extract_target_spec(text)
+            move.target_shape = shape
+            move.target_color = color
+            return [move]
+
+        return []
+
+    def _build_anchor_ops(self, slots: dict, text: str) -> List[DrawingOperation]:
+        """生成以已有图形为参照的绘制操作。
+
+        解析 "在圆的正上方画个三角形" → AnchorShapeOperation
+        """
+        ref_shape, ref_color = self._extract_target_spec(text)
+        direction = self._extract_anchor_direction(text)
+        shape = slots.get("shape")  # 要画的形状
+
+        if not shape or not direction:
+            return []
+
+        radius = float(slots.get("radius", 60))
+        return [AnchorShapeOperation(
+            ref_shape=ref_shape,
+            ref_color=ref_color,
+            ref_direction=direction,
+            shape_type=shape,
+            color=slots.get("color_hex", "#000000"),
+            size=slots.get("size", 3),
+            filled=slots.get("filled", True),
+            radius_hint=radius,
+        )]
+
+    def _extract_anchor_direction(self, text: str) -> str:
+        """从文本提取相对方向。"""
+        if "正上" in text:
+            return "above"
+        if "正下" in text:
+            return "below"
+        if "里面" in text:
+            return "inside"
+        # "的左边"/"的右边" 或 "三角形左边"/"三角形右边"（省略"的"）
+        if "左边" in text:
+            return "left"
+        if "右边" in text:
+            return "right"
+        return ""
 
     def _is_edit_command(self, text: str) -> bool:
         """判断是否是作用于最近图形的编辑命令。"""
+        if RELATIVE_MOVE_PATTERN.search(text):
+            return True
         if any(word in text for word in ("选中", "选择")):
             return True
         if self._is_delete_selected_command(text):
@@ -438,6 +500,27 @@ class CommandParser:
 
     def _extract_move_operation(self, text: str) -> Optional[MoveSelectedOperation]:
         """从语音文本提取移动操作。"""
+        # 新增：相对位置偏移（"在直线的左上方"）
+        rel_match = RELATIVE_MOVE_PATTERN.search(text)
+        if rel_match:
+            pos_word = rel_match.group(1)
+            offsets = {
+                "左上方": (-40, -40),
+                "右上方": (40, -40),
+                "左下方": (-40, 40),
+                "右下方": (40, 40),
+                "左边": (-40, 0),
+                "右边": (40, 0),
+                "上边": (0, -40),
+                "下边": (0, 40),
+                "左上": (-40, -40),
+                "右上": (40, -40),
+                "左下": (-40, 40),
+                "右下": (40, 40),
+            }
+            dx, dy = offsets.get(pos_word, (-20, -20))
+            return MoveSelectedOperation(dx=dx, dy=dy)
+
         position = self._extract_position(text)
         if position and "移" in text and any(word in text for word in ("到", "至", "去")):
             return MoveSelectedOperation(target_position=position)
@@ -456,6 +539,41 @@ class CommandParser:
         if dx == 0 and dy == 0:
             return None
         return MoveSelectedOperation(dx=dx, dy=dy)
+
+    def _extract_target_spec(self, text: str) -> tuple[str, str]:
+        """从文本提取目标图形的形状类型和颜色。
+
+        例如 "蓝色圆圈要在直线的左上方" → ("circle", "蓝")
+        例如 "圆圈要在直线的左上方" → ("circle", "")
+
+        Returns:
+            (shape_key, color_name) 或 ("", "") 如果无法识别
+        """
+        color = ""
+        shape = ""
+        first_pos = len(text)  # 追踪最早匹配的位置
+
+        # 匹配颜色名
+        color_m = match_color(text)
+        if color_m:
+            color = color_m
+
+        # 匹配形状名——使用宽松模式（不需要"画"字），取最早出现的匹配
+        loose_shapes: dict[str, Pattern[str]] = {
+            "circle": re.compile(r"(圆|圆形|圈圈|圆圈)", re.IGNORECASE),
+            "rectangle": re.compile(r"(矩形|方形|正方|长方形|方框)", re.IGNORECASE),
+            "triangle": re.compile(r"(三角|三角形)", re.IGNORECASE),
+            "star": re.compile(r"(星|星星|五角星)", re.IGNORECASE),
+            "line_draw": re.compile(r"(直线|线条)", re.IGNORECASE),
+            "freehand": re.compile(r"(手绘|随便画)", re.IGNORECASE),
+        }
+        for shape_key, pattern in loose_shapes.items():
+            m = pattern.search(text)
+            if m and m.start() < first_pos:
+                first_pos = m.start()
+                shape = shape_key
+
+        return (shape, color)
 
     def _extract_scale_factor(self, text: str, default: float) -> float:
         """提取缩放比例，没有数字时使用默认步进。"""

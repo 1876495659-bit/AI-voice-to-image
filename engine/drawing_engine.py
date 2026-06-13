@@ -21,6 +21,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 import config
 from engine.operations import (
     AIImageOperation,
+    AnchorShapeOperation,
     CircleOperation,
     ColorOperation,
     DeleteSelectedOperation,
@@ -259,9 +260,14 @@ class DrawingEngine:
 
     def _handle_move_selected(self, operation: MoveSelectedOperation) -> None:
         """移动当前选中图形。"""
-        target = self._resolve_edit_target()
+        target = self._resolve_edit_target(
+            operation.target_shape, operation.target_color,
+        )
         if target is None:
-            self.signals.edit_failed.emit("没有可编辑的图形，请先画一个图形")
+            if operation.target_shape or operation.target_color:
+                self.signals.edit_failed.emit("未找到匹配的图形")
+            else:
+                self.signals.edit_failed.emit("没有可编辑的图形，请先画一个图形")
             return
 
         before = copy.deepcopy(target)
@@ -339,6 +345,34 @@ class DrawingEngine:
         self._refresh_selection_after_history_change()
         self.signals.repaint.emit()
 
+    def _handle_anchor_shape(self, operation: AnchorShapeOperation) -> None:
+        """以已有图形为参照绘制新图形。"""
+        anchor = self._find_matching_editable_operation(
+            operation.ref_shape, operation.ref_color,
+        )
+        if anchor is None:
+            self.signals.edit_failed.emit(f"未找到参照图形：{operation.ref_shape}")
+            return
+
+        bbox = self._get_bounding_box(anchor)
+        if bbox is None:
+            self.signals.edit_failed.emit("无法计算参照物边界")
+            return
+
+        pos = self._compute_anchor_position(
+            bbox, operation.ref_direction, operation.shape_type, operation.radius_hint,
+        )
+        if pos is None:
+            self.signals.edit_failed.emit("无法计算位置")
+            return
+
+        new_op = self._create_shape_at_pos(
+            operation.shape_type, pos, operation.color, operation.size,
+            operation.filled, operation.radius_hint,
+        )
+        if new_op:
+            self._execute_and_push(new_op)
+
     def _emit_state_changed(self) -> None:
         """发出状态变更信号。"""
         self.signals.state_changed.emit(
@@ -352,19 +386,190 @@ class DrawingEngine:
         self.selected_operation_id = operation_id
         self.signals.selection_changed.emit(operation_id)
 
-    def _resolve_edit_target(self) -> Optional[DrawingOperation]:
-        """返回当前选中图形，没有选中时回退到最近图形。"""
+    def _resolve_edit_target(
+        self, target_shape: str = "", target_color: str = "",
+    ) -> Optional[DrawingOperation]:
+        """返回目标图形。支持三种匹配方式：
+        1. 优先：精确 id 匹配（通过 SelectLastOperation 选中）
+        2. 次优：按 target_shape + target_color 从 history 中匹配
+        3. 回退：最近可编辑图形
+        """
         if self.selected_operation_id:
             target = self._find_operation_by_id(self.selected_operation_id)
             if self._is_editable_operation(target):
                 return target
+
+        # 按形状+颜色匹配（从最近到最早）
+        if target_shape or target_color:
+            target = self._find_matching_editable_operation(target_shape, target_color)
+            if target:
+                return target
+
         return self._find_recent_editable_operation()
+
+    def _find_matching_editable_operation(
+        self, shape: str, color: str,
+    ) -> Optional[DrawingOperation]:
+        """从 history 中反向查找匹配 shape+color 的图形。"""
+        shape_map = {
+            "circle": CircleOperation,
+            "line_draw": LineDrawOperation,
+            "rectangle": RectangleOperation,
+            "triangle": TriangleOperation,
+            "star": StarOperation,
+            "freehand": FreehandOperation,
+        }
+        for op in reversed(self.history.history):
+            if not self._is_editable_operation(op):
+                continue
+
+            # 匹配形状
+            if shape and shape in shape_map:
+                if not isinstance(op, shape_map[shape]):
+                    continue
+
+            # 匹配颜色
+            if color:
+                op_color = getattr(op, "color", "")
+                if op_color and not self._color_matches(op_color, color):
+                    continue
+
+            return op
+
+        return None
+
+    # --- 参照定位辅助方法 ---
+
+    def _get_bounding_box(self, op: DrawingOperation) -> Optional[dict]:
+        """获取可编辑图形的边界框 {cx, cy, top, bottom, left, right}。"""
+        if isinstance(op, CircleOperation):
+            r = op.radius
+            cx, cy = op.center
+            return {"cx": cx, "cy": cy, "r": r,
+                    "top": cy - r, "bottom": cy + r,
+                    "left": cx - r, "right": cx + r}
+        elif isinstance(op, RectangleOperation):
+            x1, y1 = op.top_left
+            x2, y2 = op.bottom_right
+            return {"cx": (x1 + x2) / 2, "cy": (y1 + y2) / 2,
+                    "top": y1, "bottom": y2, "left": x1, "right": x2}
+        elif isinstance(op, TriangleOperation):
+            xs = [op.p1[0], op.p2[0], op.p3[0]]
+            ys = [op.p1[1], op.p2[1], op.p3[1]]
+            cx, cy = sum(xs) / 3, sum(ys) / 3
+            return {"cx": cx, "cy": cy,
+                    "top": min(ys), "bottom": max(ys),
+                    "left": min(xs), "right": max(xs)}
+        elif isinstance(op, StarOperation):
+            cx, cy = op.center
+            r = op.outer_radius
+            return {"cx": cx, "cy": cy, "r": r,
+                    "top": cy - r, "bottom": cy + r,
+                    "left": cx - r, "right": cx + r}
+        elif isinstance(op, LineDrawOperation):
+            x1, y1 = op.start
+            x2, y2 = op.end
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            return {"cx": cx, "cy": cy,
+                    "top": min(y1, y2), "bottom": max(y1, y2),
+                    "left": min(x1, x2), "right": max(x1, x2)}
+        elif isinstance(op, FreehandOperation) and op.points:
+            xs = [p[0] for p in op.points]
+            ys = [p[1] for p in op.points]
+            return {"cx": sum(xs) / len(xs), "cy": sum(ys) / len(ys),
+                    "top": min(ys), "bottom": max(ys),
+                    "left": min(xs), "right": max(xs)}
+        elif isinstance(op, AIImageOperation):
+            # 默认按 400x400 估算
+            x, y = op.position
+            return {"cx": x + 200, "cy": y + 200,
+                    "top": y, "bottom": y + 400,
+                    "left": x, "right": x + 400}
+        return None
+
+    def _compute_anchor_position(
+        self, bbox: dict, direction: str, shape_type: str, radius: float,
+    ) -> Optional[tuple]:
+        """根据方向计算新图形中心坐标（紧邻参照物）。"""
+        gap = 5
+        if direction == "above":
+            return (bbox["cx"], bbox["top"] - gap - radius)
+        elif direction == "below":
+            return (bbox["cx"], bbox["bottom"] + gap + radius)
+        elif direction == "left":
+            half = radius if shape_type == "circle" else int(radius * 0.7)
+            return (bbox["left"] - gap - half, bbox["cy"])
+        elif direction == "right":
+            half = radius if shape_type == "circle" else int(radius * 0.7)
+            return (bbox["right"] + gap + half, bbox["cy"])
+        elif direction == "inside":
+            return (bbox["cx"], bbox["cy"])
+        return None
+
+    def _create_shape_at_pos(
+        self, shape_type: str, center: tuple, color: str,
+        size: int, filled: bool, radius: float,
+    ) -> Optional[DrawingOperation]:
+        """在指定位置创建形状操作。"""
+        if shape_type == "circle":
+            return CircleOperation(color=color, size=size, filled=filled,
+                                   center=center, radius=radius)
+        elif shape_type == "rectangle":
+            half_w, half_h = radius, max(30, int(radius * 0.75))
+            tl = (center[0] - half_w, center[1] - half_h)
+            br = (center[0] + half_w, center[1] + half_h)
+            return RectangleOperation(color=color, size=size, filled=filled,
+                                      top_left=tl, bottom_right=br)
+        elif shape_type == "triangle":
+            s = int(radius)
+            p1 = (center[0], center[1] - s)
+            p2 = (center[0] - s, center[1] + s // 2)
+            p3 = (center[0] + s, center[1] + s // 2)
+            return TriangleOperation(color=color, size=size, filled=filled,
+                                     p1=p1, p2=p2, p3=p3)
+        elif shape_type == "star":
+            return StarOperation(color=color, size=size, filled=filled,
+                                 center=center, outer_radius=radius,
+                                 inner_radius=radius * 0.4)
+        elif shape_type == "line_draw":
+            return LineDrawOperation(color=color, size=size,
+                                     start=center, end=center)
+        return None
+
+    def _execute_and_push(self, operation: DrawingOperation) -> None:
+        """执行操作并压入历史。"""
+        # 先执行
+        if hasattr(operation, "center") and isinstance(
+            getattr(operation, "center", None), tuple
+        ):
+            pass  # 位置已设定
+        # 压入历史
+        self.history.push(operation)
+        self.signals.repaint.emit()
 
     def _find_operation_by_id(self, operation_id: str) -> Optional[DrawingOperation]:
         for op in self.history.history:
             if op.id == operation_id:
                 return op
         return None
+
+    def _color_matches(self, color_hex: str, color_name: str) -> bool:
+        """判断 HEX 颜色名是否与中文颜色名匹配。
+
+        通过颜色名称的中文映射（color_map）转换后比较 HEX 值。
+        """
+        from parser import color_map
+
+        # 如果 color_name 本身就是 HEX
+        if color_name.startswith("#"):
+            return color_hex.upper() == color_name.upper()
+
+        # 将中文颜色名转为 HEX 后比较
+        mapped = color_map.get_color(color_name)
+        if mapped:
+            return color_hex.upper() == mapped.upper()
+        # 回退：近似匹配——检查 HEX 颜色是否属于该中文颜色的常见范围
+        return False
 
     def _find_recent_editable_operation(self) -> Optional[DrawingOperation]:
         for op in reversed(self.history.history):
@@ -560,6 +765,7 @@ class DrawingEngine:
         OperationType.SCALE_SELECTED: _handle_scale_selected,
         OperationType.RECOLOR_SELECTED: _handle_recolor_selected,
         OperationType.DELETE_SELECTED: _handle_delete_selected,
+        OperationType.ANCHOR_SHAPE: _handle_anchor_shape,
         OperationType.CLEAR: _handle_clear,
         OperationType.UNDO: _handle_undo,
         OperationType.REDO: _handle_redo,

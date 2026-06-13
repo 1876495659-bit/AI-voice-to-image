@@ -46,6 +46,9 @@ class OperationType(Enum):
     RECOLOR_SELECTED = auto()   # 修改当前/最近图形颜色
     DELETE_SELECTED = auto()    # 删除当前/最近图形
 
+    # 参照定位绘制
+    ANCHOR_SHAPE = auto()       # 以已有图形为参照绘制新图形
+
     # 操作
     UNDO = auto()
     REDO = auto()
@@ -261,6 +264,8 @@ class MoveSelectedOperation(DrawingOperation):
     dy: int = 0
     target_position: tuple | None = None
     target_id: str = ""
+    target_shape: str = ""
+    target_color: str = ""
     before: DrawingOperation | None = None
     after: DrawingOperation | None = None
 
@@ -294,3 +299,28 @@ class DeleteSelectedOperation(DrawingOperation):
     target_id: str = ""
     deleted_operation: DrawingOperation | None = None
     deleted_index: int = -1
+
+
+# --- 参照定位绘制 ---
+
+@dataclass
+class AnchorShapeOperation(DrawingOperation):
+    """以已有图形为参照，在指定方向绘制新图形。
+
+    引擎执行时：查找 ref_shape+ref_color 匹配的图形，
+    计算其边界框，在 ref_direction 方向紧邻处生成 shape_type 指定的形状。
+
+    Attributes:
+        ref_shape:       参照物形状类型，如 "circle"、"triangle"。
+        ref_color:       参照物颜色名，如 "蓝色"。
+        ref_direction:   相对方向："above"/"below"/"left"/"right"/"inside"。
+        shape_type:      要绘制的形状，如 "triangle"、"rectangle"。
+        radius_hint:     新图形的大小提示（半径/半宽）。
+    """
+
+    op_type: OperationType = field(default=OperationType.ANCHOR_SHAPE, init=False)
+    ref_shape: str = ""
+    ref_color: str = ""
+    ref_direction: str = ""
+    shape_type: str = ""
+    radius_hint: float = 60.0

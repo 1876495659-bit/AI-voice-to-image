@@ -81,6 +81,18 @@ POSITION_RANGE_PATTERN: Pattern[str] = re.compile(
     r"从[^(（]*(左上|左下|右上|右下|中心|中间|上中|下中|左中|右中)[^(（]*(到至|往|到|到)*[^(（]*(左上|左下|右上|右下|中心|中间|上中|下中|左中|右中)[^(（]*$"
 )
 
+# 相对位置移动（"在直线的左上方"）
+RELATIVE_MOVE_PATTERN: Pattern[str] = re.compile(
+    r"[在向往][到向]?(?:到)?[^(（]*(?:直线|圆|圆圈|圆形|三角|三角形|星|星星|矩形|方形|正方|长方形|它|这个|图形|对象)[^(（]*(左上方|右上方|左下方|右下方|左边|右边|上边|下边|左上|右上|左下|右下)[^(（]*$",
+    re.IGNORECASE,
+)
+
+# 以已有图形为参照定位绘制（"在圆的正上方画个三角形"）
+ANCHOR_SHAPE_PATTERN: Pattern[str] = re.compile(
+    r"在[^(（]*(?:直线|圆|圆圈|圆形|三角|三角形|星|星星|矩形|方形|正方|长方形|它|这个|图形|对象)[^(（]*(正上|正下|左边|右边|里面)[^(（]*",
+    re.IGNORECASE,
+)
+
 # 系统命令
 SYSTEM_PATTERNS: Dict[str, Pattern[str]] = {
     "undo": re.compile(r"(撤销|撤回|undo|回去|返[回还])", re.IGNORECASE),
