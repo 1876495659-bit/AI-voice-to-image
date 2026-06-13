@@ -4,6 +4,16 @@ Global configuration for the AI Voice Drawing Tool.
 import os
 from pathlib import Path
 
+# Load .env file for local development
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    with open(_env_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip())
+
 # ── Whisper Settings ──────────────────────────────────────────────
 # Model size: "tiny" < "base" < "small" < "medium" < "large"
 # base: fastest on CPU (~1s per 10s audio), good accuracy
