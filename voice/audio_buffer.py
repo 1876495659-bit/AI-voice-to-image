@@ -43,7 +43,7 @@ class AudioBuffer(QObject):
     SILENCE_DURATION: float = 0.35      # 静音多久算语音结束
     MIN_VOICE_DURATION: float = 0.25    # 最短语音时长 (秒)
     BLOCK_DURATION: float = 0.15        # 回调块大小 (秒)
-    NEAR_SILENCE_FACTOR: float = 0.35   # 接近静音倍率 (rms < threshold × factor)
+    NEAR_SILENCE_FACTOR: float = 0.85   # 结束语音倍率 (rms < threshold × factor)
 
     def __init__(self,
                  sample_rate: int = config.AUDIO_SAMPLE_RATE,

@@ -42,6 +42,29 @@ def test_soft_speech_above_default_threshold_triggers_audio_ready() -> None:
     assert app is not None
 
 
+def test_background_noise_below_threshold_flushes_voice() -> None:
+    """说话后回到底噪时应结束语音，而不是一直保持 VAD 激活。"""
+    app = _app()
+    buffer = AudioBuffer(volume_threshold=0.006)
+    buffer._mic_sr = 16000
+    buffer._volume_threshold = 0.006
+    ready_audio: list[np.ndarray] = []
+    buffer.audio_ready.connect(ready_audio.append)
+
+    speech = np.ones(8000, dtype=np.float32) * 0.01
+    background = np.ones(8000, dtype=np.float32) * 0.004
+    buffer._audio_callback(speech.reshape(-1, 1), len(speech), None, None)
+    buffer._audio_callback(background.reshape(-1, 1), len(background), None, None)
+    buffer._silence_start = time.monotonic() - buffer.SILENCE_DURATION - 0.05
+    buffer._try_flush(0.004)
+    buffer._poll_queue()
+
+    assert ready_audio
+    assert buffer.vad_active is False
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_soft_speech_above_default_threshold_triggers_audio_ready()
+    test_background_noise_below_threshold_flushes_voice()
     print("test_audio_buffer_sensitivity: OK")
