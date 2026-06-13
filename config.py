@@ -35,7 +35,7 @@ AI_IMAGE_SIZE: str = "1024x1024"
 AI_IMAGE_QUALITY: str = "standard"
 
 # Agnes Image 2.1 Flash
-AGNES_API_KEY: str = "sk-LsvUIMwJdLtmaNsYZ0mvcXfJyzpS02H6IR7MRtOYqjsbUDJu"
+AGNES_API_KEY: str = os.environ.get("AGNES_API_KEY", "")
 AGNES_API_BASE: str = "https://apihub.agnes-ai.com"
 AGNES_IMAGE_MODEL: str = "agnes-image-2.1-flash"
 AGNES_IMAGE_SIZE: str = "1024x1024"
