@@ -40,10 +40,27 @@ class AgnesImageService(AIService):
         self._api_base = api_base or config.AGNES_API_BASE
         self._cache: dict[str, bytes] = {}
 
+    SKETCH_PREFIX = (
+        "sketch style, hand-drawn pencil drawing, charcoal sketch, "
+        "rough edges, artistic illustration, white background, "
+    )
+
+    _SKETCH_WORDS = frozenset((
+        "sketch", "drawing", "pencil", "hand-drawn", "charcoal",
+        "草图", "素描", "手绘", "素描画",
+    ))
+
+    def _enhance_for_sketch_style(self, prompt: str) -> str:
+        """确保提示词导向手绘素描风格。"""
+        if any(w in prompt.lower() for w in self._SKETCH_WORDS):
+            return prompt
+        return f"{self.SKETCH_PREFIX}{prompt}"
+
     def generate_image(self, prompt: str) -> Optional[bytes]:
         """使用 Agnes Image 2.1 Flash 生成图像。
 
         优先从缓存返回，缓存未命中时调用 API。
+        自动为提示词追加手绘素描风格引导。
 
         Args:
             prompt: 图像描述提示词。
@@ -55,7 +72,9 @@ class AgnesImageService(AIService):
             logger.error("AGNES_API_KEY 未配置")
             return None
 
-        cache_key = self.get_cache_key(prompt)
+        # 手绘风格化
+        sketch_prompt = self._enhance_for_sketch_style(prompt)
+        cache_key = self.get_cache_key(sketch_prompt)
         if cache_key in self._cache:
             logger.info("Agnes 图像缓存命中")
             return self._cache[cache_key]

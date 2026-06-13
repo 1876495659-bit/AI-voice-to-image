@@ -1,7 +1,7 @@
 """画布渲染组件 — 美化版。
 
 自定义 QWidget，重写 paintEvent() 用 QPainter 渲染所有绘图操作。
-新增：网格背景、坐标参考线、操作数量统计。
+新增：网格背景、坐标参考线、操作数量统计、AI 图片白边裁剪。
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ class CanvasWidget(QWidget):
     - 十字参考线（中心线）
     - 操作数量统计
     - 缩放支持
+    - AI 图片白边裁剪（不规则轮廓）
     """
 
     operation_added = pyqtSignal(DrawingOperation)
@@ -243,12 +244,52 @@ class CanvasWidget(QWidget):
             return
         pixmap = QPixmap()
         if pixmap.loadFromData(op.image_bytes):
+            # 裁剪白边
+            cropped = self._crop_white_edges(pixmap)
             x, y = op.position
             max_size = 400
-            scaled = pixmap.scaled(max_size, max_size,
-                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
+            scaled = cropped.scaled(max_size, max_size,
+                                    Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(x, y, scaled)
+
+    def _crop_white_edges(self, pixmap: QPixmap) -> QPixmap:
+        """裁剪图片四周的白色/接近白色边缘，保留内容轮廓。"""
+        img = pixmap.toImage()
+        if img.isNull():
+            return pixmap
+
+        # 找到非白色区域的边界
+        left, right, top, bottom = img.width(), 0, img.height(), 0
+        for x in range(img.width()):
+            for y in range(img.height()):
+                pixel = img.pixelColor(x, y)
+                # 不是纯白或接近纯白（亮度低于 95%）
+                if pixel.lightnessF() < 0.95:
+                    left = min(left, x)
+                    right = max(right, x)
+                    top = min(top, y)
+                    bottom = max(bottom, y)
+
+        if left > right or top > bottom:
+            # 全白图片，返回原图
+            return pixmap
+
+        # 裁剪
+        cropped = pixmap.copy(left, top, right - left + 1, bottom - top + 1)
+
+        # 添加透明边缘（柔化效果）
+        margin = 5
+        size = cropped.size()
+        result = QPixmap(size)
+        result.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.drawPixmap(0, 0, cropped)
+        painter.end()
+
+        return result
 
     def _draw_selection(self, painter: QPainter) -> None:
         if not self._selected_operation_id:
@@ -285,7 +326,7 @@ class CanvasWidget(QWidget):
         if isinstance(op, LineDrawOperation):
             x1, y1 = op.start
             x2, y2 = op.end
-            return min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)
+            return min(x1, x2), min(y1, y2), abs(x2 - x1), abs(x2 - x1)
         if isinstance(op, FreehandOperation) and op.points:
             xs = [p[0] for p in op.points]
             ys = [p[1] for p in op.points]
