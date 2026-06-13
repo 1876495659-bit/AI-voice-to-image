@@ -206,9 +206,9 @@ class VoiceFeedbackPanel(QWidget):
 
     def show_recognition_started(self) -> None:
         """提示用户语音片段已经送入识别。"""
-        self.text_label.setText("正在识别...")
+        self.text_label.setText("已听到语音，正在整理文字...")
         self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
-        self.action_label.setText("→ 正在识别语音")
+        self.action_label.setText("→ 已收到语音片段")
 
     def show_action(self, action_text: str) -> None:
         self.action_label.setText(f"→ {action_text}")

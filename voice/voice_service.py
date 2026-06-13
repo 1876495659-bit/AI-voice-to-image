@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import time
 from typing import Optional
@@ -25,6 +26,10 @@ import config
 from voice.audio_buffer import AudioBuffer
 
 logger = logging.getLogger(__name__)
+
+
+class _UnstableTranscriptionError(Exception):
+    """Whisper 输出明显不稳定时用于中断展示和执行。"""
 
 
 class VoiceServiceSignals(QObject):
@@ -155,6 +160,9 @@ class VoiceService(QObject):
                 self.signals.transcription_ready.emit(text, confidence)
             else:
                 logger.debug("未识别到语音 (trimmed: %.2fs)", len(audio) / 16000)
+        except _UnstableTranscriptionError:
+            logger.warning("识别结果不稳定，已丢弃")
+            self.signals.error.emit("语音识别结果不稳定，请再说一遍")
         except Exception as e:
             logger.error("Whisper 推理失败: %s", e)
             self.signals.error.emit(f"语音识别失败: {e}")
@@ -203,10 +211,15 @@ class VoiceService(QObject):
             condition_on_previous_text=False,
             initial_prompt=prompt,
         )
-        text = result.get("text", "").strip()
+        text = self._clean_transcription(result.get("text", ""))
+        if self._is_unstable_transcription(text, result):
+            raise _UnstableTranscriptionError()
         confidence = self._estimate_confidence(result, text)
 
         if confidence < config.WHISPER_FALLBACK_THRESHOLD:
+            if confidence >= 0.45 and self._looks_like_drawing_command(text):
+                return text, confidence
+
             # 回退到更大模型
             if self._fallback_model is None:
                 try:
@@ -226,12 +239,57 @@ class VoiceService(QObject):
                 condition_on_previous_text=False,
                 initial_prompt=prompt,
             )
-            text2 = result2.get("text", "").strip()
+            text2 = self._clean_transcription(result2.get("text", ""))
+            if self._is_unstable_transcription(text2, result2):
+                raise _UnstableTranscriptionError()
             conf2 = self._estimate_confidence(result2, text2)
             if conf2 > confidence and text2:
                 return text2, conf2
 
         return text, confidence
+
+    def _clean_transcription(self, text: str) -> str:
+        """清理 Whisper 偶发的非法替换字符和多余空白。"""
+        cleaned = text.replace("\ufffd", "")
+        cleaned = re.sub(r"\s+", "", cleaned)
+        return cleaned.strip()
+
+    def _is_unstable_transcription(self, text: str, result: dict) -> bool:
+        """识别明显重复幻听，避免把垃圾文本展示或执行。"""
+        if not text:
+            return False
+
+        if len(text) >= 12 and len(set(text)) <= 2:
+            return True
+
+        for seg in result.get("segments", []):
+            ratio = seg.get("compression_ratio")
+            if ratio is not None and ratio >= 3.0:
+                return True
+
+        return self._has_repeating_phrase(text)
+
+    def _has_repeating_phrase(self, text: str) -> bool:
+        """检测“画一边画一边...”这类短语循环幻听。"""
+        if len(text) < 16:
+            return False
+
+        for size in range(1, min(8, len(text) // 3) + 1):
+            chunk = text[:size]
+            repeated = chunk * (len(text) // size)
+            remainder = text[len(repeated):]
+            matched = len(repeated) if text.startswith(repeated) else 0
+            if matched + len(remainder) >= len(text) * 0.8 and text.count(chunk) >= 4:
+                return True
+        return False
+
+    def _looks_like_drawing_command(self, text: str) -> bool:
+        """低置信但像绘图指令时优先响应，避免首次加载 slow fallback。"""
+        keywords = (
+            "画", "圆", "圈", "矩形", "方形", "三角", "星", "线",
+            "红", "蓝", "绿", "黄", "黑", "白", "清空", "撤销",
+        )
+        return any(keyword in text for keyword in keywords)
 
     def _estimate_confidence(self, result: dict, text: str) -> float:
         """从 Whisper 结果估算置信度。"""
