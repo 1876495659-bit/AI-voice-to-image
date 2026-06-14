@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from typing import Optional
 
 import requests
@@ -40,47 +41,88 @@ class AgnesImageService(AIService):
         self._api_base = api_base or config.AGNES_API_BASE
         self._cache: dict[str, bytes] = {}
 
-    # 默认风格：卡通简笔画。如果用户明确说要写实则覆盖。
-    _DEFAULT_SKETCH_PREFIX = (
+    # 颜色名 → 英文色值映射
+    _COLOR_MAP = {
+        "红": "red", "蓝": "blue", "绿": "green", "黄": "yellow",
+        "黑": "black", "白": "white", "紫": "purple", "橙": "orange",
+        "棕": "brown", "灰": "gray", "粉": "pink",
+    }
+
+    # 简笔画风格引导
+    _SIMPLE_LINE_ART = (
+        "simple single-color line drawing, clean white background, "
+        "single color outline, no fill colors, no shading, no gradients, "
+        "no photorealistic, no cartoon illustration, "
+    )
+    _CARTOON_DOODLE = (
         "simple cartoon doodle, children's coloring book illustration, "
         "bold outlines, flat fill colors, cute character design, "
         "white background, no shading, no realistic texture, "
         "no photograph, no detailed illustration, "
     )
-    _REALISTIC_PREFIX = ""
-
+    _REALISTIC_WORDS = frozenset((
+        "写实", "真实", "照片", "photorealistic", "realistic",
+        "photo", "写实风格", "逼真", "高质量", "精致",
+    ))
     _SKETCH_WORDS = frozenset((
         "sketch", "drawing", "pencil", "hand-drawn", "charcoal",
         "line drawing", "line art", "crayon", "doodle",
         "简笔画", "素描", "手绘", "素描画", "线条画",
         "蜡笔", "单色", "线稿", "涂鸦",
     ))
-    _REALISTIC_WORDS = frozenset((
-        "写实", "真实", "照片", "photorealistic", "realistic",
-        "photo", "写实风格", "逼真", "高质量", "精致",
-    ))
 
-    def _enhance_for_sketch_style(self, prompt: str, has_color: bool = False) -> str:
-        """确保提示词导向手绘风格。
+    def _extract_color_from_prompt(self, prompt: str) -> Optional[tuple]:
+        """从提示词中提取颜色并返回英文色值和清理后的提示词。
 
-        如果用户要求写实（包含"写实"/"真实"/"照片"等词）则不加风格引导，
-        让模型自由生成。否则强制卡通简笔画风格。
-        如果提示词中包含颜色名，保留颜色信息。
+        支持格式：
+        - "红色小猫" → ("red", "小猫")
+        - "红笔小猫" → ("red", "小猫")
+        - "用红笔画小猫" → ("red", "小猫")
+        - "一只小猫" → (None, "一只小猫")
+        """
+        for cn, en in self._COLOR_MAP.items():
+            if cn in prompt:
+                # 清理：去掉颜色词 + 可能跟随的"色"/"笔"/"画笔"
+                cleaned = re.sub(re.escape(cn) + r'[色笔]?', '', prompt)
+                # 再去掉"用"/"画"/"笔"等工具动词
+                cleaned = re.sub(r'[用画笔]', '', cleaned)
+                # 清理多余空格和标点
+                cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+                return en, cleaned
+        return None, prompt
+
+    def _enhance_for_sketch_style(self, prompt: str) -> str:
+        """确保提示词导向合适的风格。
+
+        优先级：
+        1. 用户要求写实 → 不加引导，自由生成
+        2. 用户指定颜色 → 单色线条画 + 指定颜色
+        3. 用户无颜色指定 → 卡通简笔画
         """
         if any(w in prompt for w in self._REALISTIC_WORDS):
-            # 用户明确要求写实，不加引导
             return prompt
-        if any(w in prompt.lower() for w in self._SKETCH_WORDS):
-            # 提示词已含手绘词，仅追加卡通引导
-            return f"{self._DEFAULT_SKETCH_PREFIX}{prompt}"
-        # 默认：卡通简笔画
-        prefix = self._DEFAULT_SKETCH_PREFIX
-        # 如果 prompt 以"一只"/"一个"/"一只"开头，清理掉冗余量词
-        if prompt.startswith("一只"):
-            prompt = prompt[2:]
-        elif prompt.startswith("一个"):
-            prompt = prompt[2:]
-        return f"{prefix}{prompt}"
+
+        # 检查是否指定了颜色
+        color_en, cleaned_prompt = self._extract_color_from_prompt(prompt)
+
+        # 清理量词前缀
+        for prefix in ("一只", "一个", "一幅"):
+            if cleaned_prompt.startswith(prefix):
+                cleaned_prompt = cleaned_prompt[len(prefix):]
+                break
+
+        if color_en:
+            # 有颜色 → 单色线条画风格
+            return (
+                f"a simple single-color line drawing of a "
+                f"{cleaned_prompt} drawn with {color_en} ink, "
+                f"{self._SIMPLE_LINE_ART.strip()}"
+            )
+        else:
+            # 无颜色 → 卡通简笔画
+            if any(w in prompt.lower() for w in self._SKETCH_WORDS):
+                return f"{self._CARTOON_DOODLE}{cleaned_prompt}"
+            return f"{self._CARTOON_DOODLE}{cleaned_prompt}"
 
     def generate_image(self, prompt: str) -> Optional[bytes]:
         """使用 Agnes Image 2.1 Flash 生成图像。
