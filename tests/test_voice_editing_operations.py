@@ -100,6 +100,15 @@ def test_parser_understands_scale_and_recolor_commands() -> None:
     assert recolor.color == "#FF0000"
 
 
+def test_parser_ignores_canvas_zoom_as_artwork_edit() -> None:
+    """“缩小画布”是视图请求，不能缩放最近图形或改变作品。"""
+    parser = CommandParser(canvas_width=1920, canvas_height=1080)
+
+    result = parser.parse("缩小画布", 0.95)
+
+    assert result.operations == []
+
+
 def test_parser_understands_delete_selected_commands() -> None:
     """理解删除当前/最近图形的语音。"""
     parser = CommandParser(canvas_width=1920, canvas_height=1080)
@@ -204,6 +213,7 @@ if __name__ == "__main__":
     test_parser_understands_move_selected_commands()
     test_parser_understands_move_to_corner_commands()
     test_parser_understands_scale_and_recolor_commands()
+    test_parser_ignores_canvas_zoom_as_artwork_edit()
     test_parser_understands_delete_selected_commands()
     test_engine_auto_selects_and_moves_recent_shape()
     test_engine_moves_selected_shape_center_to_target_position()

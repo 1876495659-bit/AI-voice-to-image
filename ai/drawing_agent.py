@@ -243,6 +243,10 @@ class DrawingAgent:
         if self._is_draw_shape(text):
             return self._plan_draw_shape(text, canvas_elements, ops, engine)
 
+        if self._should_place_fish_in_water(text, canvas_elements):
+            quantity = self._extract_quantity(text)
+            return self._plan_fish_in_water(text, canvas_elements, quantity)
+
         if self._is_draw_line(text):
             return self._plan_draw_line(text, canvas_elements, ops, engine)
 
@@ -676,6 +680,80 @@ class DrawingAgent:
             ops.append(op)
         return ops
 
+    def _should_place_fish_in_water(self, text: str, elements: List[dict]) -> bool:
+        """判断是否应把鱼追加到已有水域，而不是生成独立鱼图片。"""
+        mentions_fish = "鱼" in text
+        mentions_water = any(word in text for word in ("河", "河流", "小河", "小溪", "溪", "水里", "水中", "里面"))
+        has_water_element = any(elem.get("type") == "river" for elem in elements)
+        return mentions_fish and mentions_water and has_water_element
+
+    def _plan_fish_in_water(
+        self,
+        text: str,
+        elements: List[dict],
+        quantity: int,
+    ) -> List[DrawingOperation]:
+        """在已有河流/水域内部追加小鱼笔画。"""
+        river_boxes = [elem["bbox"] for elem in elements if elem.get("type") == "river"]
+        if not river_boxes:
+            return []
+
+        left = int(min(box["left"] for box in river_boxes))
+        right = int(max(box["right"] for box in river_boxes))
+        top = int(min(box["top"] for box in river_boxes))
+        bottom = int(max(box["bottom"] for box in river_boxes))
+        quantity = max(1, min(quantity, 6))
+        color = self._extract_color_from_text(text)
+        size = max(2, self._extract_size(text))
+
+        placements = self._fish_positions(left, right, top, bottom, quantity)
+        ops: List[DrawingOperation] = []
+        for cx, cy in placements:
+            fish = StrokeGroupOperation(
+                color=color,
+                size=size,
+                semantic_label="鱼",
+                strokes=self._fish_strokes(cx, cy, max(10, min(22, (right - left) // 18))),
+            )
+            ops.append(fish)
+        return ops
+
+    def _fish_positions(
+        self,
+        left: int,
+        right: int,
+        top: int,
+        bottom: int,
+        quantity: int,
+    ) -> List[tuple]:
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        anchors = [
+            (0.22, 0.45), (0.46, 0.58), (0.70, 0.42),
+            (0.34, 0.72), (0.58, 0.28), (0.82, 0.62),
+        ]
+        return [
+            (int(left + width * fx), int(top + height * fy))
+            for fx, fy in anchors[:quantity]
+        ]
+
+    def _fish_strokes(self, cx: int, cy: int, radius: int) -> List[List[tuple]]:
+        body = [
+            (cx - radius, cy),
+            (cx - radius // 3, cy - radius // 2),
+            (cx + radius, cy),
+            (cx - radius // 3, cy + radius // 2),
+            (cx - radius, cy),
+        ]
+        tail = [
+            (cx + radius, cy),
+            (cx + radius + radius // 2, cy - radius // 2),
+            (cx + radius + radius // 2, cy + radius // 2),
+            (cx + radius, cy),
+        ]
+        eye = [(cx - radius // 2, cy - 1), (cx - radius // 2 + 1, cy - 1)]
+        return [body, tail, eye]
+
     def _plan_draw_shape(
         self,
         text: str,
@@ -787,6 +865,9 @@ class DrawingAgent:
         elif isinstance(op, StarOperation):
             return "star"
         elif isinstance(op, LineDrawOperation):
+            label = getattr(op, "semantic_label", "")
+            if any(word in label for word in ("河", "溪", "水")):
+                return "river"
             return "line"
         elif isinstance(op, FreehandOperation):
             return "freehand"

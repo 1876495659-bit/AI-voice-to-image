@@ -600,6 +600,8 @@ class CommandParser:
 
     def _is_edit_command(self, text: str) -> bool:
         """判断是否是作用于最近图形的编辑命令。"""
+        if self._is_canvas_view_command(text):
+            return False
         if RELATIVE_MOVE_PATTERN.search(text):
             return True
         if any(word in text for word in ("选中", "选择")):
@@ -613,6 +615,12 @@ class CommandParser:
         if any(word in text for word in ("变大", "变小", "放大", "缩小", "扩大", "小一点", "大一点")):
             return True
         return bool(match_color(text) and any(word in text for word in ("改", "换", "变")))
+
+    def _is_canvas_view_command(self, text: str) -> bool:
+        """画布视图缩放暂不作为作品编辑执行。"""
+        has_canvas_target = any(word in text for word in ("画布", "作品", "整幅画", "整张画", "画面"))
+        has_zoom_word = any(word in text for word in ("缩小", "放大", "变大", "变小", "扩大", "小一点", "大一点"))
+        return has_canvas_target and has_zoom_word
 
     def _is_absolute_move_command(self, text: str) -> bool:
         """判断“把它放到右上角/让它到中间”这类绝对定位编辑命令。"""

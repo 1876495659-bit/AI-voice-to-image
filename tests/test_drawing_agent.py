@@ -121,6 +121,24 @@ def test_agent_draws_river_right_of_tree_as_canvas_lines() -> None:
     assert max(max(op.start[0], op.end[0]) for op in operations) <= 860
 
 
+def test_agent_places_fish_inside_existing_river_as_pen_strokes() -> None:
+    """“在河里面画几条鱼”应在已有河流区域追加小鱼笔画。"""
+    engine = DrawingEngine(canvas_width=900, canvas_height=600)
+    river_ops = DrawingAgent()._river_strokes(460, 850, 330, "#000000", 3)
+    engine.execute_multiple(river_ops)
+
+    operations = DrawingAgent().plan("在河里面画几条鱼", engine)
+
+    assert len(operations) == 3
+    assert all(isinstance(op, StrokeGroupOperation) for op in operations)
+    assert not any(isinstance(op, AIImageOperation) for op in operations)
+    assert all(op.semantic_label == "鱼" for op in operations)
+    for op in operations:
+        points = [point for stroke in op.strokes for point in stroke]
+        assert all(460 <= x <= 850 for x, _ in points)
+        assert all(300 <= y <= 410 for _, y in points)
+
+
 def test_agent_recolors_named_ai_element() -> None:
     """“用蓝色涂满小河”应按语义目标给小河上色。"""
     engine = DrawingEngine(canvas_width=800, canvas_height=600)
@@ -202,6 +220,7 @@ if __name__ == "__main__":
     test_agent_generates_open_vocabulary_ai_element()
     test_agent_places_open_vocabulary_element_near_reference()
     test_agent_draws_river_right_of_tree_as_canvas_lines()
+    test_agent_places_fish_inside_existing_river_as_pen_strokes()
     test_agent_recolors_named_ai_element()
     test_agent_places_apples_inside_tree_canopy_as_pen_strokes()
     test_agent_places_exact_two_apples_on_tree_without_new_ai_image()
