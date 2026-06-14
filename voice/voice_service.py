@@ -248,10 +248,23 @@ class VoiceService(QObject):
 
         return text, confidence
 
+    # 语音常见同音/近音纠错映射 — Whisper 误识别时兜底
+    _PHONETIC_FIXES: dict[str, str] = {
+        "污规": "乌龟", "乌归": "乌龟", "污龟": "乌龟",
+        "污规的": "乌龟的", "污规脚": "乌龟脚", "污规下面": "乌龟下面",
+    }
+
     def _clean_transcription(self, text: str) -> str:
-        """清理 Whisper 偶发的非法替换字符和多余空白。"""
+        """清理 Whisper 偶发的非法替换字符、多余空白和同音误识。"""
         cleaned = text.replace("\ufffd", "")
         cleaned = re.sub(r"\s+", "", cleaned)
+        cleaned = cleaned.strip()
+
+        # 同音词纠错（精确匹配 → 替换）
+        for wrong, correct in self._PHONETIC_FIXES.items():
+            if cleaned == wrong or wrong in cleaned:
+                cleaned = cleaned.replace(wrong, correct)
+
         return cleaned.strip()
 
     def _is_unstable_transcription(self, text: str, result: dict) -> bool:
