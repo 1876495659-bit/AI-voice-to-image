@@ -130,6 +130,7 @@ class CommandParser:
         fallback_threshold: 置信度回退阈值，低于此值标记为 UNCERTAIN。
         canvas_width: 画布宽度（用于定位计算）。
         canvas_height: 画布高度（用于定位计算）。
+        canvas_operations: 当前画布上的操作列表，用于智能参照物匹配。
     """
 
     def __init__(self,
@@ -139,6 +140,7 @@ class CommandParser:
         self.fallback_threshold = fallback_threshold
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
+        self.canvas_operations: List[DrawingOperation] = []
 
     def parse(self, text: str, confidence: float = 1.0) -> ParseResult:
         """解析一条语音文本。
@@ -738,28 +740,67 @@ class CommandParser:
 
         return (shape, color)
 
-    def _extract_ai_anchor_keyword(self, text: str) -> str:
-        """从文本中提取 AI 图像的参照关键词（动物/对象名）。
+    def update_canvas_operations(self, operations: List[DrawingOperation]) -> None:
+        """同步当前画布上的操作列表，供智能参照物匹配使用。
 
-        例如 "乌龟"、"小猫"、"小狗"、"小兔子" 等。
+        在每次解析前调用，parser 会根据画布中已有的 AI 图像 prompt
+        推断用户提到的实体名称。
+        """
+        self.canvas_operations = list(operations)
+
+    def _extract_ai_anchor_keyword(self, text: str) -> str:
+        """从文本中提取 AI 图像的参照关键词。
+
+        策略：优先查询画布中已有的 AI 图像 prompt，
+        匹配用户提到的动物/对象名。画布中没有的实体不回退到硬编码列表，
+        因为用户不会引用画布上不存在的物体。
+
+        例如 "乌龟" 在文本中出现 → 查画布里有没有 prompt 含"乌龟"的 AI 图像
         返回最长匹配的关键词或空字符串。
         """
-        # 按最长匹配优先排序
-        ai_keywords = [
-            "小老鼠", "猫头鹰", "蝴蝶", "蜻蜓", "蜜蜂", "蚂蚁", "蜘蛛", "螃蟹",
-            "海豚", "鲸", "企鹅", "鹦鹉", "松鼠", "熊猫", "兔子", "小兔子",
-            "小狗", "小猫", "小鸟", "小鱼", "小花", "小树",
-            "小老鼠",
-            "猫", "狗", "鼠", "兔", "鸟", "鱼", "星", "花", "树", "草", "人",
-            "熊", "狮", "虎", "象", "马", "羊", "牛", "猪", "鸡", "鸭", "鹅",
-            "蛙", "蛇", "龟", "乌龟", "虫", "蝶", "蜂", "鲤", "风景", "图案",
-            "动物", "植物", "人物", "场景", "卡通", "房子", "房屋",
-            "建筑", "城市", "乡村", "海洋", "森林", "龙", "凤",
-        ]
-        for kw in ai_keywords:
+        # 1. 从画布中收集所有 AI 图像的 prompt 关键词
+        canvas_keywords: dict[str, int] = {}
+        for op in self.canvas_operations:
+            prompt = getattr(op, "prompt", "")
+            if not prompt:
+                continue
+            # 从 prompt 中提取有意义的中文词（去掉英文和修饰词）
+            chinese_chars = re.findall(r'[一-鿿]', prompt)
+            if not chinese_chars:
+                continue
+            ch_text = "".join(chinese_chars)
+            # 从 prompt 中提取动物/对象关键词
+            for kw in self._CANVAS_AI_KEYWORDS:
+                if kw in ch_text:
+                    if kw not in canvas_keywords:
+                        canvas_keywords[kw] = len(kw)  # 最长匹配优先
+
+        # 2. 如果画布中有已知实体，只在这些实体中匹配
+        if canvas_keywords:
+            # 按长度降序，优先最长匹配
+            for kw in sorted(canvas_keywords, key=lambda k: -len(k)):
+                if kw in text:
+                    return kw
+            return ""
+
+        # 3. 画布中没有 AI 图像，回退到通用关键词匹配（兜底）
+        for kw in self._CANVAS_AI_KEYWORDS:
             if kw in text:
                 return kw
         return ""
+
+    # 通用动物/对象关键词（画布为空时的兜底）
+    _CANVAS_AI_KEYWORDS: tuple[str, ...] = (
+        "小老鼠", "猫头鹰", "蝴蝶", "蜻蜓", "蜜蜂", "蚂蚁", "蜘蛛", "螃蟹",
+        "海豚", "鲸", "企鹅", "鹦鹉", "松鼠", "熊猫", "兔子", "小兔子",
+        "小狗", "小猫", "小鸟", "小鱼", "小花", "小树",
+        "小老鼠",
+        "猫", "狗", "鼠", "兔", "鸟", "鱼", "星", "花", "树", "草", "人",
+        "熊", "狮", "虎", "象", "马", "羊", "牛", "猪", "鸡", "鸭", "鹅",
+        "蛙", "蛇", "龟", "乌龟", "虫", "蝶", "蜂", "鲤", "风景", "图案",
+        "动物", "植物", "人物", "场景", "卡通", "房子", "房屋",
+        "建筑", "城市", "乡村", "海洋", "森林", "龙", "凤",
+    )
 
     def _extract_brush_color(self, text: str) -> str:
         """理解“红笔/蓝笔/黄笔”这类口语颜色。"""

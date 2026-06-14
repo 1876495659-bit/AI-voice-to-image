@@ -293,6 +293,9 @@ class MainWindow(QMainWindow):
             self.voice_panel.show_action(self._describe_operations(agent_ops))
             return
 
+        # 同步画布操作列表到 parser，供智能参照物匹配使用
+        self.parser.update_canvas_operations(self.engine.get_history())
+
         result = self.parser.parse(text, confidence)
         if result.is_success:
             if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
