@@ -41,17 +41,19 @@ class AgnesImageService(AIService):
         self._cache: dict[str, bytes] = {}
 
     SKETCH_PREFIX = (
-        "cartoon illustration style, hand-drawn marker drawing, "
-        "cute cartoon character, thick colored marker lines, "
-        "simple cartoon style, clean white background, "
-        "vector sticker art, bold outlines, flat colors, "
-        "children's book illustration, no photorealistic, "
+        "simple line drawing, minimalist sketch, single color line art, "
+        "children's drawing, crayon sketch, simple colored pencil drawing, "
+        "clean white background, no shading, no gradients, "
+        "stick figure style, doodle art, hand-drawn outline, "
+        "monochrome illustration, simple black outline drawing, "
+        "no photorealistic, no cartoon sticker, no vibrant colors, "
     )
 
     _SKETCH_WORDS = frozenset((
         "sketch", "drawing", "pencil", "hand-drawn", "charcoal",
-        "cartoon", "marker", "illustration", "卡通",
-        "草图", "素描", "手绘", "素描画", "卡通画",
+        "line drawing", "line art", "crayon", "doodle",
+        "简笔画", "素描", "手绘", "素描画", "线条画",
+        "蜡笔", "单色", "线稿", "涂鸦",
     ))
 
     def _enhance_for_sketch_style(self, prompt: str) -> str:
