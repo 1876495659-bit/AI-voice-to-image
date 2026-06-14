@@ -213,6 +213,11 @@ class CommandParser:
         if is_background_color_command(text):
             return "background"
 
+        # 系统命令要先于 AI/编辑识别，避免“清空画布”被“画布”误解。
+        sys_cmd = match_system(text)
+        if sys_cmd:
+            return "system"
+
         # AI 生成（最高优先级，因为可能包含"画"字）
         if is_ai_command(text):
             return "ai"
@@ -220,11 +225,6 @@ class CommandParser:
         # 编辑命令
         if self._is_edit_command(text):
             return "edit"
-
-        # 系统命令
-        sys_cmd = match_system(text)
-        if sys_cmd:
-            return "system"
 
         # 工具
         if match_tool(text):

@@ -46,6 +46,7 @@ from engine.operations import (
     LineDrawOperation,
     LabelSelectedOperation,
     MoveSelectedOperation,
+    OperationType,
     RecolorSelectedOperation,
     RectangleOperation,
     ScaleSelectedOperation,
@@ -296,6 +297,12 @@ class MainWindow(QMainWindow):
         if self._try_rollback_to_step(text):
             return
 
+        system_result = self.parser.parse(text, confidence)
+        if self._is_immediate_system_command(system_result.operations):
+            self.engine.execute_multiple(system_result.operations)
+            self.voice_panel.show_action(self._describe_operations(system_result.operations))
+            return
+
         # 同步画布操作列表到 agent（供智能位置规划使用）
         canvas_ops = self.engine.get_history()
 
@@ -374,6 +381,12 @@ class MainWindow(QMainWindow):
             return "已删除最近图形"
         if isinstance(op, SelectLastOperation):
             return "已选中最近图形"
+        if op.op_type == OperationType.CLEAR:
+            return "已清空画布"
+        if op.op_type == OperationType.UNDO:
+            return "已撤销一步"
+        if op.op_type == OperationType.REDO:
+            return "已重做一步"
         if isinstance(op, AIImageOperation):
             label = getattr(op, "semantic_label", "") or getattr(op, "prompt", "")
             # 检查同组操作数量
@@ -390,6 +403,16 @@ class MainWindow(QMainWindow):
             return "已补充太阳细节"
 
         return ", ".join(item.op_type.name for item in operations)
+
+    def _is_immediate_system_command(self, operations) -> bool:
+        return bool(operations) and all(
+            getattr(op, "op_type", None) in (
+                OperationType.CLEAR,
+                OperationType.UNDO,
+                OperationType.REDO,
+            )
+            for op in operations
+        )
 
     def _requires_edit_target(self, operations) -> bool:
         return any(isinstance(op, (

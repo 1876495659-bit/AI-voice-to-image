@@ -107,6 +107,24 @@ def test_voice_delete_command_removes_recent_shape() -> None:
     assert app is not None
 
 
+def test_voice_clear_command_clears_canvas_history_and_timeline() -> None:
+    """语音清空应清除整幅画、历史和右侧步骤快照。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+    assert window.canvas.operation_count == 1
+    assert window.timeline_panel.timeline_list.count() == 1
+
+    window.voice_service.signals.transcription_ready.emit("清空画布", 0.95)
+
+    assert window.canvas.operation_count == 0
+    assert len(window.engine.get_history()) == 0
+    assert window.timeline_panel.timeline_list.count() == 0
+    assert "已清空画布" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 def test_voice_agent_labels_fills_and_details_sun() -> None:
     """语音绘画代理应支持逐步完善太阳。"""
     app = _app()
@@ -206,6 +224,7 @@ if __name__ == "__main__":
     test_voice_edit_command_moves_recent_shape_and_updates_selection_feedback()
     test_voice_edit_command_without_shape_keeps_error_feedback()
     test_voice_delete_command_removes_recent_shape()
+    test_voice_clear_command_clears_canvas_history_and_timeline()
     test_voice_agent_labels_fills_and_details_sun()
     test_voice_open_vocabulary_ai_element_executes_agent_plan()
     test_voice_step_timeline_records_full_picture_snapshot()

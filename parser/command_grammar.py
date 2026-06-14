@@ -104,7 +104,11 @@ ANCHOR_SHAPE_PATTERN: Pattern[str] = re.compile(
 SYSTEM_PATTERNS: Dict[str, Pattern[str]] = {
     "undo": re.compile(r"(撤销|撤回|undo|回去|返[回还])", re.IGNORECASE),
     "redo": re.compile(r"(重做|重画|redo|再[一一次]|重新)[^(（]*$", re.IGNORECASE),
-    "clear": re.compile(r"(清空|清除|擦掉|全部删除|全部清除|reset)", re.IGNORECASE),
+    "clear": re.compile(
+        r"(清空|清除|擦掉|全部删除|全部清除|reset)"
+        r"(?:画布|作品|整幅画|整张画|全部内容|所有内容)?",
+        re.IGNORECASE,
+    ),
     "save": re.compile(r"(保存|存[档图]|save)", re.IGNORECASE),
     "listen_start": re.compile(r"(开始监听|开始听|打开麦克风|开始录音)", re.IGNORECASE),
     "listen_stop": re.compile(r"(停止监听|停止听|关闭麦克风|停止录音|停[止止])", re.IGNORECASE),
