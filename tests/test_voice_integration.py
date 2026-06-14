@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
+from PyQt6.QtCore import QBuffer, QIODevice
+from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import QApplication
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,6 +20,22 @@ def _app() -> QApplication:
     if app is None:
         app = QApplication(sys.argv)
     return app
+
+
+def _white_png() -> bytes:
+    image = QImage(64, 64, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#FFFFFF"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
+def _wait_until(app: QApplication, predicate, timeout: float = 2.0) -> None:
+    deadline = time.perf_counter() + timeout
+    while not predicate() and time.perf_counter() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
 
 
 def test_transcription_signal_drives_canvas() -> None:
@@ -147,20 +166,24 @@ def test_voice_agent_labels_fills_and_details_sun() -> None:
     assert app is not None
 
 
-def test_voice_open_vocabulary_ai_element_executes_agent_plan() -> None:
-    """语音说任意元素时，主窗口应执行绘画代理生成的 AI 元素。"""
+def test_voice_open_vocabulary_ai_element_updates_canvas_in_background() -> None:
+    """开放式绘画请求应后台更新整幅画布，避免阻塞 UI。"""
     app = _app()
     window = MainWindow()
-    window.engine.ai_service.generate_image = lambda prompt: b""
+    window.engine.ai_service.generate_image = lambda prompt: _white_png()
 
     window.voice_service.signals.transcription_ready.emit("画一座房子", 0.95)
+    assert "正在更新整幅画" in window.voice_panel.action_label.text()
+
+    _wait_until(app, lambda: not window.engine.is_canvas_i2i_busy())
+    app.processEvents()
 
     history = window.engine.get_history()
     assert history
-    assert history[-1].semantic_label == "房子"
+    assert history[-1].semantic_label == "整幅画"
     assert "房子" in history[-1].prompt
     assert window.canvas.operation_count == 1
-    assert "已添加" in window.voice_panel.action_label.text()
+    assert "已更新整幅画" in window.voice_panel.action_label.text()
     assert app is not None
 
 
@@ -226,7 +249,7 @@ if __name__ == "__main__":
     test_voice_delete_command_removes_recent_shape()
     test_voice_clear_command_clears_canvas_history_and_timeline()
     test_voice_agent_labels_fills_and_details_sun()
-    test_voice_open_vocabulary_ai_element_executes_agent_plan()
+    test_voice_open_vocabulary_ai_element_updates_canvas_in_background()
     test_voice_step_timeline_records_full_picture_snapshot()
     test_click_timeline_snapshot_rolls_back_canvas_to_that_step()
     test_voice_can_roll_back_to_named_picture_step()

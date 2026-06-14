@@ -73,6 +73,8 @@ class DrawingEngineSignals(QObject):
     selection_changed = pyqtSignal(object)
     # 编辑命令失败
     edit_failed = pyqtSignal(str)
+    # 整幅画布 AI 生成完成
+    canvas_i2i_finished = pyqtSignal(str, bool)
 
     def get_history(self):
         """返回当前历史中的所有操作（供 canvas 重绘使用）。"""
@@ -120,6 +122,8 @@ class DrawingEngine:
         # I2I 状态：累计提示词 + 上一轮图片
         self._i2i_prompt_history: List[str] = []
         self._i2i_current_image_bytes: Optional[bytes] = None
+        self._i2i_lock = threading.Lock()
+        self._i2i_busy = False
 
     # --- 核心操作 ---
 
@@ -154,6 +158,42 @@ class DrawingEngine:
             logger.warning("I2I: 没有上一轮图片，无法执行图生图")
             return False
         return self.execute_canvas_i2i(prompt_delta)
+
+    def start_canvas_i2i(self, prompt_delta: str) -> bool:
+        """在后台线程执行整幅画布生成，避免阻塞 UI 主线程。"""
+        prompt_delta = prompt_delta.strip()
+        if not prompt_delta:
+            return False
+
+        with self._i2i_lock:
+            if self._i2i_busy:
+                self.signals.edit_failed.emit("AI 正在生成中，请稍等")
+                return False
+            self._i2i_busy = True
+
+        threading.Thread(
+            target=self._run_canvas_i2i_worker,
+            args=(prompt_delta,),
+            daemon=True,
+        ).start()
+        return True
+
+    def is_canvas_i2i_busy(self) -> bool:
+        """整幅画布 AI 是否正在后台生成。"""
+        with self._i2i_lock:
+            return self._i2i_busy
+
+    def _run_canvas_i2i_worker(self, prompt_delta: str) -> None:
+        success = False
+        try:
+            success = self.execute_canvas_i2i(prompt_delta)
+        except Exception as exc:
+            logger.exception("整幅画布 AI 后台生成异常")
+            self.signals.edit_failed.emit(f"AI 生成失败：{exc}")
+        finally:
+            with self._i2i_lock:
+                self._i2i_busy = False
+            self.signals.canvas_i2i_finished.emit(prompt_delta, success)
 
     def execute_canvas_i2i(self, prompt_delta: str) -> bool:
         """让模型把整张白布当作一幅画逐步生成/修改。

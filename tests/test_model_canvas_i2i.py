@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -19,6 +20,12 @@ class FakeCanvasImageService:
     def extend_image(self, prev_image_bytes, prompt):
         self.extended_calls.append((prev_image_bytes, prompt))
         return b"second-canvas"
+
+
+class SlowCanvasImageService(FakeCanvasImageService):
+    def generate_image(self, prompt):
+        time.sleep(0.4)
+        return super().generate_image(prompt)
 
 
 def test_canvas_i2i_uses_previous_canvas_and_updates_undo_state():
@@ -54,6 +61,26 @@ def test_canvas_i2i_uses_previous_canvas_and_updates_undo_state():
     assert engine._i2i_current_image_bytes == b"first-canvas"
 
 
+def test_canvas_i2i_can_run_in_background_without_blocking_ui_thread():
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    engine.ai_service = SlowCanvasImageService()
+
+    started_at = time.perf_counter()
+    assert engine.start_canvas_i2i("画一棵树") is True
+    elapsed = time.perf_counter() - started_at
+
+    assert elapsed < 0.2
+    assert engine.is_canvas_i2i_busy() is True
+
+    deadline = time.perf_counter() + 2
+    while engine.is_canvas_i2i_busy() and time.perf_counter() < deadline:
+        time.sleep(0.02)
+
+    assert engine.is_canvas_i2i_busy() is False
+    assert len(engine.get_history()) == 1
+
+
 if __name__ == "__main__":
     test_canvas_i2i_uses_previous_canvas_and_updates_undo_state()
+    test_canvas_i2i_can_run_in_background_without_blocking_ui_thread()
     print("test_model_canvas_i2i passed")

@@ -235,6 +235,9 @@ class MainWindow(QMainWindow):
         self.engine.signals.background_changed.connect(
             self.canvas.set_background_color
         )
+        self.engine.signals.canvas_i2i_finished.connect(
+            self._on_canvas_i2i_finished
+        )
         self.timeline_panel.item_clicked.connect(
             self._on_timeline_click
         )
@@ -308,13 +311,12 @@ class MainWindow(QMainWindow):
 
         if self._should_use_model_canvas(text):
             self.voice_panel.show_ai_loading("整幅画")
-            if self.engine.execute_canvas_i2i(text):
-                self._record_picture_step(text)
-                self.voice_panel.show_action(f"已更新整幅画：{text}")
-                self.voice_panel.clear_ai_loading()
+            if self.engine.start_canvas_i2i(text):
+                self.voice_panel.show_action(f"正在更新整幅画：{text}")
                 return
             self.voice_panel.clear_ai_loading()
-            logger.warning("整幅画布模型生成失败，回退到本地规划流程")
+            self.voice_panel.show_error("AI 正在生成中，请稍等")
+            return
 
         # I2I 模式：如果已经生成过第一张图，且用户是在扩展画面
         if self.engine.is_i2i_mode() and self._is_i2i_extension(text, canvas_ops):
@@ -511,6 +513,14 @@ class MainWindow(QMainWindow):
         self.canvas.set_selected_operation(self.engine.selected_operation_id)
         self.canvas.update()
         self._refresh_latest_picture_snapshot()
+        self.voice_panel.clear_ai_loading()
+
+    def _on_canvas_i2i_finished(self, text: str, success: bool) -> None:
+        if success:
+            self._record_picture_step(text)
+            self.voice_panel.show_action(f"已更新整幅画：{text}")
+        else:
+            self.voice_panel.show_error("AI 生成失败，请稍后重试")
         self.voice_panel.clear_ai_loading()
 
     def _on_timeline_click(self, item) -> None:
