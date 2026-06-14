@@ -38,6 +38,7 @@ class OperationType(Enum):
 
     # AI 生成
     AI_IMAGE = auto()     # AI 生成图片
+    STROKE_GROUP = auto() # AI 线稿提取后的笔画组
 
     # 对象编辑
     SELECT_LAST = auto()        # 选中最近图形
@@ -159,6 +160,18 @@ class FreehandOperation(DrawingOperation):
 
     op_type: OperationType = field(default=OperationType.FREEHAND, init=False)
     points: List[tuple] = field(default_factory=list)
+
+
+@dataclass
+class StrokeGroupOperation(DrawingOperation):
+    """一组语义相关的笔画路径。
+
+    用于承载 AI 生成线稿提取后的结果，最终在画布上按笔画渲染，
+    不再作为方形图片覆盖到作品上。
+    """
+
+    op_type: OperationType = field(default=OperationType.STROKE_GROUP, init=False)
+    strokes: List[List[tuple]] = field(default_factory=list)
 
 
 @dataclass

@@ -31,6 +31,7 @@ from engine.operations import (
     RecolorSelectedOperation,
     RectangleOperation,
     StarOperation,
+    StrokeGroupOperation,
     TriangleOperation,
 )
 from parser import color_map
@@ -503,7 +504,7 @@ class DrawingAgent:
         for op in ops:
             if not isinstance(op, (
                 CircleOperation, RectangleOperation, TriangleOperation,
-                StarOperation, LineDrawOperation, FreehandOperation, AIImageOperation,
+                StarOperation, LineDrawOperation, FreehandOperation, StrokeGroupOperation, AIImageOperation,
             )):
                 continue
 
@@ -539,6 +540,8 @@ class DrawingAgent:
             return "line"
         elif isinstance(op, FreehandOperation):
             return "freehand"
+        elif isinstance(op, StrokeGroupOperation):
+            return self._extract_element_type(getattr(op, "semantic_label", ""))
         elif isinstance(op, AIImageOperation):
             prompt = getattr(op, "prompt", "")
             # 从 prompt 中提取关键词作为类型
@@ -615,6 +618,14 @@ class DrawingAgent:
         elif isinstance(op, FreehandOperation) and op.points:
             xs = [p[0] for p in op.points]
             ys = [p[1] for p in op.points]
+            return {"cx": sum(xs) / len(xs), "cy": sum(ys) / len(ys),
+                    "top": min(ys), "bottom": max(ys),
+                    "left": min(xs), "right": max(xs)}
+
+        elif isinstance(op, StrokeGroupOperation) and op.strokes:
+            points = [point for stroke in op.strokes for point in stroke]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
             return {"cx": sum(xs) / len(xs), "cy": sum(ys) / len(ys),
                     "top": min(ys), "bottom": max(ys),
                     "left": min(xs), "right": max(xs)}

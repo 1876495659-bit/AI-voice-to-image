@@ -42,6 +42,7 @@ from engine.operations import (
     SelectLastOperation,
     SizeOperation,
     StarOperation,
+    StrokeGroupOperation,
     ToolOperation,
     TriangleOperation,
 )
@@ -263,7 +264,18 @@ class DrawingEngine:
         """
         image_bytes = self.ai_service.generate_image(operation.prompt)
         if image_bytes:
-            operation.image_bytes = image_bytes
+            from ai.stroke_extractor import StrokeExtractor
+
+            stroke_op = StrokeExtractor().extract(
+                image_bytes,
+                position=operation.position,
+                label=operation.semantic_label or operation.prompt,
+                color=operation.color,
+                size=operation.size,
+            )
+            stroke_op.id = operation.id
+            self._replace_operation_in_history(operation.id, stroke_op)
+            self._set_selected_operation(stroke_op.id)
             self.signals.repaint.emit()
         else:
             # 在主线程中发出错误信号
@@ -558,6 +570,13 @@ class DrawingEngine:
             return {"cx": sum(xs) / len(xs), "cy": sum(ys) / len(ys),
                     "top": min(ys), "bottom": max(ys),
                     "left": min(xs), "right": max(xs)}
+        elif isinstance(op, StrokeGroupOperation) and op.strokes:
+            points = [point for stroke in op.strokes for point in stroke]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            return {"cx": sum(xs) / len(xs), "cy": sum(ys) / len(ys),
+                    "top": min(ys), "bottom": max(ys),
+                    "left": min(xs), "right": max(xs)}
         elif isinstance(op, AIImageOperation):
             # 默认按 400x400 估算
             x, y = op.position
@@ -632,6 +651,13 @@ class DrawingEngine:
                 return op
         return None
 
+    def _replace_operation_in_history(self, operation_id: str, replacement: DrawingOperation) -> bool:
+        for index, op in enumerate(self.history._undo_stack):
+            if op.id == operation_id:
+                self.history._undo_stack[index] = replacement
+                return True
+        return False
+
     def _color_matches(self, color_hex: str, color_name: str) -> bool:
         """判断 HEX 颜色名是否与中文颜色名匹配。
 
@@ -685,6 +711,7 @@ class DrawingEngine:
             LineDrawOperation,
             RectangleOperation,
             StarOperation,
+            StrokeGroupOperation,
             TriangleOperation,
         ))
 
@@ -705,6 +732,11 @@ class DrawingEngine:
             operation.end = self._fit_point((operation.end[0] + dx, operation.end[1] + dy))
         elif isinstance(operation, FreehandOperation):
             operation.points = [self._fit_point((x + dx, y + dy)) for x, y in operation.points]
+        elif isinstance(operation, StrokeGroupOperation):
+            operation.strokes = [
+                [self._fit_point((x + dx, y + dy)) for x, y in stroke]
+                for stroke in operation.strokes
+            ]
         elif isinstance(operation, AIImageOperation):
             operation.position = self._fit_point((operation.position[0] + dx, operation.position[1] + dy))
         else:
@@ -740,6 +772,12 @@ class DrawingEngine:
                 sum(x for x, _ in operation.points) / len(operation.points),
                 sum(y for _, y in operation.points) / len(operation.points),
             )
+        if isinstance(operation, StrokeGroupOperation) and operation.strokes:
+            points = [point for stroke in operation.strokes for point in stroke]
+            return (
+                sum(x for x, _ in points) / len(points),
+                sum(y for _, y in points) / len(points),
+            )
         if isinstance(operation, AIImageOperation):
             return operation.position
         return None
@@ -773,6 +811,14 @@ class DrawingEngine:
             cx = sum(x for x, _ in operation.points) / len(operation.points)
             cy = sum(y for _, y in operation.points) / len(operation.points)
             operation.points = [self._scale_point(point, cx, cy, factor) for point in operation.points]
+        elif isinstance(operation, StrokeGroupOperation) and operation.strokes:
+            points = [point for stroke in operation.strokes for point in stroke]
+            cx = sum(x for x, _ in points) / len(points)
+            cy = sum(y for _, y in points) / len(points)
+            operation.strokes = [
+                [self._scale_point(point, cx, cy, factor) for point in stroke]
+                for stroke in operation.strokes
+            ]
         else:
             return False
         return True

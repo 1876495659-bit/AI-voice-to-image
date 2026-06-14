@@ -30,6 +30,7 @@ from engine.operations import (
     OperationType,
     RectangleOperation,
     StarOperation,
+    StrokeGroupOperation,
     TriangleOperation,
 )
 
@@ -246,6 +247,13 @@ class CanvasWidget(QWidget):
         for i in range(len(op.points) - 1):
             painter.drawLine(*op.points[i], *op.points[i + 1])
 
+    def _draw_stroke_group(self, painter: QPainter, op: StrokeGroupOperation) -> None:
+        for stroke in op.strokes:
+            if len(stroke) < 2:
+                continue
+            for i in range(len(stroke) - 1):
+                painter.drawLine(*stroke[i], *stroke[i + 1])
+
     def _draw_line(self, painter: QPainter, op: LineDrawOperation) -> None:
         painter.drawLine(*op.start, *op.end)
 
@@ -457,6 +465,11 @@ class CanvasWidget(QWidget):
             xs = [p[0] for p in op.points]
             ys = [p[1] for p in op.points]
             return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        if isinstance(op, StrokeGroupOperation) and op.strokes:
+            points = [point for stroke in op.strokes for point in stroke]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
         if isinstance(op, AIImageOperation):
             # AI 图片不返回固定边界（虚线框已由 _draw_selection 跳过）
             return None
@@ -464,6 +477,7 @@ class CanvasWidget(QWidget):
 
     _draw_handlers = {
         OperationType.FREEHAND: _draw_freehand,
+        OperationType.STROKE_GROUP: _draw_stroke_group,
         OperationType.LINE_DRAW: _draw_line,
         OperationType.RECTANGLE: _draw_rectangle,
         OperationType.CIRCLE: _draw_circle,

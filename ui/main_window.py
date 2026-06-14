@@ -51,6 +51,7 @@ from engine.operations import (
     ScaleSelectedOperation,
     SelectLastOperation,
     StarOperation,
+    StrokeGroupOperation,
     TriangleOperation,
 )
 from parser.command_parser import CommandParser
@@ -362,6 +363,9 @@ class MainWindow(QMainWindow):
         if isinstance(op, AIImageOperation):
             label = getattr(op, "semantic_label", "") or getattr(op, "prompt", "")
             return f"已添加{label}"
+        if isinstance(op, StrokeGroupOperation):
+            label = getattr(op, "semantic_label", "") or "笔画"
+            return f"已添加{label}笔画"
         if any(getattr(item, "semantic_label", "").startswith("太阳") for item in operations):
             return "已补充太阳细节"
 
@@ -435,6 +439,7 @@ class MainWindow(QMainWindow):
             LineDrawOperation,
             RectangleOperation,
             StarOperation,
+            StrokeGroupOperation,
             TriangleOperation,
         ))
 
