@@ -48,6 +48,41 @@ def test_parser_understands_move_selected_commands() -> None:
     assert op2.dy == 0
 
 
+def test_parser_understands_move_to_corner_commands() -> None:
+    """理解“让它移动到右上角”和“让它到右上角”。"""
+    parser = CommandParser(canvas_width=1920, canvas_height=1080)
+
+    result = parser.parse("让它移动到右上角", 0.95)
+    assert result.is_success
+    op = result.operations[0]
+    assert isinstance(op, MoveSelectedOperation)
+    assert op.target_position == (1880, 40)
+
+    result2 = parser.parse("让它到右上角", 0.95)
+    assert result2.is_success
+    op2 = result2.operations[0]
+    assert isinstance(op2, MoveSelectedOperation)
+    assert op2.target_position == (1880, 40)
+
+    result3 = parser.parse("移动到右上角", 0.95)
+    assert result3.is_success
+    op3 = result3.operations[0]
+    assert isinstance(op3, MoveSelectedOperation)
+    assert op3.target_position == (1880, 40)
+
+
+def test_engine_moves_selected_shape_center_to_target_position() -> None:
+    """绝对位置移动应把当前图形中心移动到目标位置。"""
+    engine = DrawingEngine(canvas_width=1920, canvas_height=1080)
+    circle = CircleOperation(center=(960, 540), radius=40)
+    engine.execute(circle)
+
+    engine.execute(MoveSelectedOperation(target_position=(1880, 40)))
+
+    assert circle.center == (1880, 40)
+    assert engine.selected_operation_id == circle.id
+
+
 def test_parser_understands_scale_and_recolor_commands() -> None:
     """理解缩放和改色语音编辑。"""
     parser = CommandParser(canvas_width=1920, canvas_height=1080)
@@ -167,9 +202,11 @@ def test_canvas_tracks_selected_operation_id() -> None:
 
 if __name__ == "__main__":
     test_parser_understands_move_selected_commands()
+    test_parser_understands_move_to_corner_commands()
     test_parser_understands_scale_and_recolor_commands()
     test_parser_understands_delete_selected_commands()
     test_engine_auto_selects_and_moves_recent_shape()
+    test_engine_moves_selected_shape_center_to_target_position()
     test_engine_scales_and_recolors_selected_shape()
     test_engine_undo_redo_reverts_selected_edit()
     test_engine_deletes_selected_shape_and_restores_with_undo()

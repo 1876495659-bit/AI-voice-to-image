@@ -604,11 +604,21 @@ class CommandParser:
             return True
         if self._is_delete_selected_command(text):
             return True
+        if self._is_absolute_move_command(text):
+            return True
         if any(word in text for word in ("移动", "移一点", "往左", "往右", "往上", "往下", "左移", "右移", "上移", "下移")):
             return True
         if any(word in text for word in ("变大", "变小", "放大", "缩小", "扩大", "小一点", "大一点")):
             return True
         return bool(match_color(text) and any(word in text for word in ("改", "换", "变")))
+
+    def _is_absolute_move_command(self, text: str) -> bool:
+        """判断“把它放到右上角/让它到中间”这类绝对定位编辑命令。"""
+        if self._extract_position(text) is None:
+            return False
+        has_move_verb = any(word in text for word in ("移", "移动", "放", "摆", "挪", "拖", "到", "去"))
+        has_target = any(word in text for word in ("它", "他", "这个", "图形", "对象", "圆", "圈", "矩形", "方形", "太阳"))
+        return has_move_verb and (has_target or any(word in text for word in ("移", "移动", "放", "摆", "挪", "拖")))
 
     def _is_delete_selected_command(self, text: str) -> bool:
         """判断是否是删除当前/最近图形。"""
@@ -640,7 +650,7 @@ class CommandParser:
             return MoveSelectedOperation(dx=dx, dy=dy)
 
         position = self._extract_position(text)
-        if position and "移" in text and any(word in text for word in ("到", "至", "去")):
+        if position and self._is_absolute_move_command(text):
             return MoveSelectedOperation(target_position=position)
 
         distance = self._extract_number(text, default=40)
