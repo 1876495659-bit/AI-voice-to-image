@@ -38,6 +38,21 @@ def _line_art_png() -> bytes:
     return bytes(buffer.data())
 
 
+def _large_line_art_png() -> bytes:
+    image = QImage(1000, 900, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#FFFFFF"))
+    painter = QPainter(image)
+    painter.setPen(QPen(QColor("#000000"), 8))
+    painter.drawRect(100, 80, 760, 700)
+    painter.drawLine(120, 760, 850, 120)
+    painter.end()
+
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
 def test_extractor_converts_line_art_image_to_stroke_group() -> None:
     """线稿图片应被提取成笔画组，而不是作为方形图片贴到画布上。"""
     app = _app()
@@ -56,6 +71,27 @@ def test_extractor_converts_line_art_image_to_stroke_group() -> None:
     assert all(len(stroke) >= 2 for stroke in op.strokes)
     assert min(x for stroke in op.strokes for x, _ in stroke) >= 100
     assert min(y for stroke in op.strokes for _, y in stroke) >= 200
+    assert app is not None
+
+
+def test_extractor_fits_large_line_art_inside_ai_element_box() -> None:
+    """大尺寸模型线稿应缩放进 400x400 元素框，避免整幅画比例失控。"""
+    app = _app()
+
+    op = StrokeExtractor().extract(
+        _large_line_art_png(),
+        position=(50, 70),
+        label="大树",
+        color="#000000",
+        size=3,
+    )
+
+    points = [point for stroke in op.strokes for point in stroke]
+    assert points
+    assert min(x for x, _ in points) >= 50
+    assert min(y for _, y in points) >= 70
+    assert max(x for x, _ in points) <= 450
+    assert max(y for _, y in points) <= 470
     assert app is not None
 
 
@@ -80,5 +116,6 @@ def test_engine_replaces_ai_image_with_stroke_group_after_generation() -> None:
 
 if __name__ == "__main__":
     test_extractor_converts_line_art_image_to_stroke_group()
+    test_extractor_fits_large_line_art_inside_ai_element_box()
     test_engine_replaces_ai_image_with_stroke_group_after_generation()
     print("test_stroke_extraction: OK")

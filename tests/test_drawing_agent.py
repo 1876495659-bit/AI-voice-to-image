@@ -146,6 +146,31 @@ def test_agent_places_apples_inside_tree_canopy_as_pen_strokes() -> None:
         assert all(120 <= y <= 340 for _, y in points)
 
 
+def test_agent_places_exact_two_apples_on_tree_without_new_ai_image() -> None:
+    """“两个苹果”应只追加两个树冠内笔画苹果。"""
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    tree = StrokeGroupOperation(
+        color="#000000",
+        size=3,
+        semantic_label="大树",
+        strokes=[
+            [(280, 100), (220, 170), (210, 260), (290, 350), (430, 330), (460, 220), (390, 110), (280, 100)],
+            [(330, 330), (320, 470), (370, 470), (360, 330)],
+        ],
+    )
+    engine.execute(tree)
+
+    operations = DrawingAgent().plan("在大树上画两个红色苹果", engine)
+
+    assert len(operations) == 2
+    assert all(isinstance(op, StrokeGroupOperation) for op in operations)
+    assert not any(isinstance(op, AIImageOperation) for op in operations)
+    for op in operations:
+        points = [point for stroke in op.strokes for point in stroke]
+        assert all(210 <= x <= 460 for x, _ in points)
+        assert all(100 <= y <= 350 for _, y in points)
+
+
 if __name__ == "__main__":
     test_agent_labels_recent_shape_as_sun()
     test_agent_fills_current_circle_with_yellow()
@@ -154,4 +179,5 @@ if __name__ == "__main__":
     test_agent_places_open_vocabulary_element_near_reference()
     test_agent_recolors_named_ai_element()
     test_agent_places_apples_inside_tree_canopy_as_pen_strokes()
+    test_agent_places_exact_two_apples_on_tree_without_new_ai_image()
     print("test_drawing_agent: OK")
