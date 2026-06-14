@@ -35,6 +35,8 @@ def test_canvas_i2i_uses_previous_canvas_and_updates_undo_state():
     assert first.image_bytes == b"first-canvas"
     assert service.generated_prompts
     assert "画一棵树" in service.generated_prompts[0]
+    assert "不要纸张纹理" in service.generated_prompts[0]
+    assert "不要投影" in service.generated_prompts[0]
 
     assert engine.execute_canvas_i2i("在树上长两个苹果") is True
 

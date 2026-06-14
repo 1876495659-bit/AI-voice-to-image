@@ -200,6 +200,7 @@ class DrawingEngine:
     def _build_canvas_i2i_prompt(self, prompt_delta: str, is_first_step: bool) -> str:
         style = (
             "单色黑色简笔画线稿，干净白色背景，像用户用同一支黑色画笔画在同一张白纸上，"
+            "画面背景必须是纯白数字画布，不要纸张纹理，不要米色背景，不要投影，"
             "不要照片风格，不要彩色填充，不要方形贴图边框，不要生成独立小图片。"
         )
         if is_first_step:

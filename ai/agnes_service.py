@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import re
 from typing import Optional
@@ -59,8 +60,9 @@ class AgnesImageService(AIService):
 
     # 简笔画风格引导 — 所有默认生成统一为此风格
     _LINE_ART = (
-        "simple single-color line drawing, clean white background, "
+        "simple single-color line drawing, pure white digital canvas background, "
         "single color outline, no fill colors, no shading, no gradients, "
+        "no paper texture, no paper sheet, no beige background, no drop shadow, "
         "no photorealistic, no cartoon illustration, "
     )
     _REALISTIC_WORDS = frozenset((
@@ -155,6 +157,36 @@ class AgnesImageService(AIService):
             f"{self._LINE_ART.strip()}"
         )
 
+    def _normalize_canvas_background(self, image_bytes: bytes) -> bytes:
+        """把模型生成的近白/米色纸张背景清理成纯白画布。"""
+        try:
+            from PIL import Image
+
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+            pixels = image.load()
+            width, height = image.size
+
+            for y in range(height):
+                for x in range(width):
+                    r, g, b, a = pixels[x, y]
+                    if a == 0:
+                        pixels[x, y] = (255, 255, 255, 255)
+                        continue
+
+                    max_channel = max(r, g, b)
+                    min_channel = min(r, g, b)
+                    is_light = r >= 190 and g >= 190 and b >= 175
+                    is_low_contrast = max_channel - min_channel <= 40
+                    if is_light and is_low_contrast:
+                        pixels[x, y] = (255, 255, 255, 255)
+
+            output = io.BytesIO()
+            image.convert("RGB").save(output, format="PNG")
+            return output.getvalue()
+        except Exception as exc:
+            logger.warning(f"清理画布背景失败，保留原图: {exc}")
+            return image_bytes
+
     def generate_image(self, prompt: str) -> Optional[bytes]:
         """使用 Agnes Image 2.1 Flash 生成图像。
 
@@ -216,6 +248,7 @@ class AgnesImageService(AIService):
                 return None
 
             if image_bytes:
+                image_bytes = self._normalize_canvas_background(image_bytes)
                 self._cache[cache_key] = image_bytes
                 logger.info(f"Agnes 图像生成成功: {len(image_bytes)} bytes")
                 return image_bytes
@@ -309,6 +342,7 @@ class AgnesImageService(AIService):
                 return None
 
             if image_bytes:
+                image_bytes = self._normalize_canvas_background(image_bytes)
                 # I2I 结果不入缓存（每次不同）
                 logger.info(f"Agnes I2I 生成成功: {len(image_bytes)} bytes")
                 return image_bytes
