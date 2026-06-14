@@ -107,6 +107,28 @@ def test_voice_delete_command_removes_recent_shape() -> None:
     assert app is not None
 
 
+def test_voice_agent_labels_fills_and_details_sun() -> None:
+    """语音绘画代理应支持逐步完善太阳。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+    circle = window.engine.get_history()[0]
+
+    window.voice_service.signals.transcription_ready.emit("我刚刚画的是一个太阳", 0.95)
+    assert circle.semantic_label == "太阳"
+
+    window.voice_service.signals.transcription_ready.emit("用黄色涂满这个圆", 0.95)
+    assert circle.color == "#FFFF00"
+    assert circle.filled is True
+
+    before_count = window.canvas.operation_count
+    window.voice_service.signals.transcription_ready.emit("帮我补充一点它的细节", 0.95)
+    assert window.canvas.operation_count > before_count
+    assert "细节" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
@@ -114,4 +136,5 @@ if __name__ == "__main__":
     test_voice_edit_command_moves_recent_shape_and_updates_selection_feedback()
     test_voice_edit_command_without_shape_keeps_error_feedback()
     test_voice_delete_command_removes_recent_shape()
+    test_voice_agent_labels_fills_and_details_sun()
     print("test_voice_integration: OK")

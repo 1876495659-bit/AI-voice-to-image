@@ -26,6 +26,7 @@ import config
 from engine.operations import (
     AIImageOperation,
     AnchorShapeOperation,
+    BackgroundOperation,
     CircleOperation,
     ColorOperation,
     DeleteSelectedOperation,
@@ -44,6 +45,7 @@ from engine.operations import (
     SelectLastOperation,
     SizeOperation,
     StarOperation,
+    ToolOperation,
     TriangleOperation,
 )
 from parser import color_map
@@ -52,12 +54,13 @@ from parser.command_grammar import (
     NUMBER_PATTERN,
     RELATIVE_MOVE_PATTERN,
     SHAPE_PATTERNS,
+    is_ai_command,
+    is_background_color_command,
     match_color,
     match_shape,
     match_size,
     match_system,
     match_tool,
-    is_ai_command,
 )
 
 
@@ -204,13 +207,17 @@ class CommandParser:
         if RELATIVE_MOVE_PATTERN.search(text):
             return "edit"
 
-        # AI 生成（最高优先级，因为可能包含"画"字）
-        if self._is_edit_command(text):
-            return "edit"
+        # 背景色设置 — 在 edit 之前检查，避免"换"等词被误匹配
+        if is_background_color_command(text):
+            return "background"
 
         # AI 生成（最高优先级，因为可能包含"画"字）
         if is_ai_command(text):
             return "ai"
+
+        # 编辑命令
+        if self._is_edit_command(text):
+            return "edit"
 
         # 系统命令
         sys_cmd = match_system(text)
@@ -258,6 +265,8 @@ class CommandParser:
                 slots["radius"] = radius
 
         color_name = match_color(text)
+        if not color_name:
+            color_name = self._extract_brush_color(text)
         if color_name:
             slots["color"] = color_name
             slots["color_hex"] = color_map.get_color(color_name)
@@ -306,6 +315,8 @@ class CommandParser:
             ops.extend(self._build_anchor_ops(slots, text))
         elif intent == "edit":
             ops.extend(self._build_edit_ops(slots, text))
+        elif intent == "background":
+            ops.extend(self._build_background_ops(slots, text))
 
         # 组合操作：工具+颜色+形状，如"用红色画笔画个圆"
         # 如果同时有 tool + color + shape，额外生成颜色操作
@@ -406,11 +417,108 @@ class CommandParser:
 
     def _build_ai_ops(self, slots: dict, text: str) -> List[DrawingOperation]:
         """生成 AI 生成图片操作。"""
-        # 提取提示词：去掉命令动词部分
         prompt = self._extract_prompt(text)
         position = self._extract_position(text)
+
+        # 检查是否有"附近"/"旁边"
+        is_nearby = any(w in text for w in ("附近", "旁边"))
+
+        # 检查数量+对象（批量生成）
+        qty_animal = self._extract_quantity_and_animal(text)
+
+        if qty_animal:
+            qty, animal = qty_animal
+            if is_nearby:
+                anchor = position if position else (self.canvas_width // 2, self.canvas_height // 2)
+                return self._generate_batch_nearby(prompt, animal, qty, anchor)
+            else:
+                anchor = position if position else (self.canvas_width // 2, self.canvas_height // 2)
+                return self._generate_batch_centered(prompt, animal, qty, anchor)
+
+        # 单图模式
         pos = position if position else (self.canvas_width // 2 - 200, self.canvas_height // 2 - 200)
         return [AIImageOperation(prompt=prompt, position=pos)]
+
+    def _extract_quantity_and_animal(self, text: str) -> Optional[tuple]:
+        """从文本提取数量和对象关键词。
+
+        例如 "三只灰色小老鼠" → (3, "老鼠")
+        返回 (数量, 对象关键词) 或 None。
+        """
+        qty_map: dict[str, int] = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            "多": 3, "几": 3, "数": 3,
+        }
+
+        # 找数量词
+        qty = None
+        for word, num in qty_map.items():
+            if word in text:
+                qty = num
+                break
+
+        if qty is None:
+            return None
+
+        # 找动物/对象关键词（按最长匹配优先）
+        animal_keywords = [
+            "小老鼠", "猫头鹰", "蝴蝶", "蜻蜓", "蜜蜂", "蚂蚁", "蜘蛛", "螃蟹",
+            "海豚", "鲸", "企鹅", "鹦鹉", "松鼠", "熊猫", "兔子", "小兔子",
+            "小狗", "小猫", "小鸟", "小鱼", "小花", "小树",
+            "猫", "狗", "鼠", "兔", "鸟", "鱼", "星", "花", "树", "草", "人",
+            "熊", "狮", "虎", "象", "马", "羊", "牛", "猪", "鸡", "鸭", "鹅",
+            "蛙", "蛇", "龟", "虫", "蝶", "蜂", "鲤",
+        ]
+
+        animal = None
+        for kw in animal_keywords:
+            if kw in text:
+                animal = kw
+                break
+
+        if animal is not None:
+            return (qty, animal)
+        return None
+
+    def _generate_batch_nearby(
+        self, prompt: str, animal: str, qty: int, anchor: tuple,
+    ) -> List[DrawingOperation]:
+        """在锚点周围环形分布生成 N 个 AI 图像。"""
+        ops: List[DrawingOperation] = []
+        radius = 180
+        for i in range(qty):
+            angle_deg = -90 + (360.0 / qty) * i
+            rad = math.radians(angle_deg)
+            x = int(anchor[0] + radius * math.cos(rad))
+            y = int(anchor[1] + radius * math.sin(rad))
+            x = max(0, min(self.canvas_width - 100, x))
+            y = max(0, min(self.canvas_height - 100, y))
+            label = f"另一只{animal}" if i > 0 else f"一只{animal}"
+            ops.append(AIImageOperation(prompt=f"{prompt} {label}", position=(x, y)))
+        return ops
+
+    def _generate_batch_centered(
+        self, prompt: str, animal: str, qty: int, anchor: tuple,
+    ) -> List[DrawingOperation]:
+        """在画布中央线性排列生成 N 个 AI 图像。"""
+        ops: List[DrawingOperation] = []
+        spacing = 130
+        start_x = anchor[0] - (qty - 1) * spacing // 2
+        for i in range(qty):
+            x = max(0, min(self.canvas_width - 100, start_x + i * spacing))
+            y = max(0, min(self.canvas_height - 100, anchor[1]))
+            label = f"另一只{animal}" if i > 0 else f"一只{animal}"
+            ops.append(AIImageOperation(prompt=f"{prompt} {label}", position=(x, y)))
+        return ops
+
+    def _build_background_ops(self, slots: dict, text: str) -> List[DrawingOperation]:
+        """生成画布背景色变更操作。"""
+        color_name = match_color(text)
+        if color_name:
+            hex_color = color_map.get_color(color_name)
+            return [BackgroundOperation(color=hex_color)]
+        return [BackgroundOperation(color="#FFFFFF")]
 
     def _build_edit_ops(self, slots: dict, text: str) -> List[DrawingOperation]:
         """生成当前/最近图形编辑操作。"""
@@ -585,6 +693,13 @@ class CommandParser:
 
         return (shape, color)
 
+    def _extract_brush_color(self, text: str) -> str:
+        """理解“红笔/蓝笔/黄笔”这类口语颜色。"""
+        for color_name in sorted(color_map.COLOR_MAP, key=len, reverse=True):
+            if f"{color_name}笔" in text or f"{color_name}画笔" in text:
+                return color_name
+        return ""
+
     def _extract_scale_factor(self, text: str, default: float) -> float:
         """提取缩放比例，没有数字时使用默认步进。"""
         number = self._extract_number(text, default=0)
@@ -640,6 +755,15 @@ class CommandParser:
             "mid_right": (self.canvas_width - 40, self.canvas_height // 2),
             "右中": (self.canvas_width - 40, self.canvas_height // 2),
             "右正中": (self.canvas_width - 40, self.canvas_height // 2),
+            # 简单方位
+            "左边": (40, self.canvas_height // 2),
+            "右侧": (self.canvas_width - 40, self.canvas_height // 2),
+            "顶部": (self.canvas_width // 2, 40),
+            "底部": (self.canvas_width // 2, self.canvas_height - 40),
+            "上边": (self.canvas_width // 2, 40),
+            "下边": (self.canvas_width // 2, self.canvas_height - 40),
+            "左边": (40, self.canvas_height // 2),
+            "右边": (self.canvas_width - 40, self.canvas_height // 2),
         }
 
         for key, coord in pos_map.items():

@@ -45,6 +45,7 @@ class OperationType(Enum):
     SCALE_SELECTED = auto()     # 缩放当前/最近图形
     RECOLOR_SELECTED = auto()   # 修改当前/最近图形颜色
     DELETE_SELECTED = auto()    # 删除当前/最近图形
+    LABEL_SELECTED = auto()     # 给当前/最近图形标注语义名称
 
     # 参照定位绘制
     ANCHOR_SHAPE = auto()       # 以已有图形为参照绘制新图形
@@ -53,6 +54,7 @@ class OperationType(Enum):
     UNDO = auto()
     REDO = auto()
     CLEAR = auto()        # 清空画布
+    BACKGROUND = auto()   # 设置画布背景色
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,7 @@ class DrawingOperation:
     color: str = "#000000"
     size: int = 3
     filled: bool = True
+    semantic_label: str = ""
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DrawingOperation):
@@ -287,6 +290,7 @@ class RecolorSelectedOperation(DrawingOperation):
 
     op_type: OperationType = field(default=OperationType.RECOLOR_SELECTED, init=False)
     target_id: str = ""
+    fill: bool | None = None
     before: DrawingOperation | None = None
     after: DrawingOperation | None = None
 
@@ -299,6 +303,31 @@ class DeleteSelectedOperation(DrawingOperation):
     target_id: str = ""
     deleted_operation: DrawingOperation | None = None
     deleted_index: int = -1
+
+
+@dataclass
+class LabelSelectedOperation(DrawingOperation):
+    """给当前选中图形标注语义名称。"""
+
+    op_type: OperationType = field(default=OperationType.LABEL_SELECTED, init=False)
+    label: str = ""
+    target_id: str = ""
+    before: DrawingOperation | None = None
+    after: DrawingOperation | None = None
+
+
+@dataclass
+class BackgroundOperation(DrawingOperation):
+    """改变画布背景颜色。
+
+    背景色独立于图元操作，这样已有绘图在改变背景时保持视觉外观不变。
+
+    Attributes:
+        color: 背景色 HEX 字符串。
+    """
+
+    op_type: OperationType = field(default=OperationType.BACKGROUND, init=False)
+    color: str = "#FFFFFF"
 
 
 # --- 参照定位绘制 ---

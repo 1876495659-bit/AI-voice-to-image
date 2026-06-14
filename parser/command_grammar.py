@@ -107,7 +107,20 @@ SYSTEM_PATTERNS: Dict[str, Pattern[str]] = {
 
 # AI 生成
 AI_PATTERN: Pattern[str] = re.compile(
-    r"(生成|画[一][幅张]?(张|幅)?[的]?[个]?(图|图片|画|照片|插画|海报))",
+    r"(生成|画[一][幅张]?(张|幅)?[的]?[个]?(图|图片|画|照片|插画|海报|图案|图画|画面))",
+)
+
+# 用颜色画笔画 + 非形状对象（AI 生图）
+# 匹配: "用红笔画小猫", "用红色画笔画一只小狗", "用画笔画风景"
+COLOR_BRUSH_DRAW_PATTERN: Pattern[str] = re.compile(
+    r"用[^(（]*(?:红|蓝|绿|黄|黑|白|紫|橙|青|粉|棕|灰|深蓝|浅蓝|天蓝|湖蓝|深绿|浅绿|草绿|墨绿|深红|浅红|玫红|酒红|深黄|浅黄|深紫|浅紫|深橙|浅橙|深棕|浅棕|深灰|浅灰|银|金|栗|褐|珊瑚|樱桃|柠檬|土|杏|咖啡|巧克|炭|铁|洋红|品红|粉蓝|粉绿|粉紫|粉橙|粉棕|粉灰|青紫|茶|驼|卡其|军绿|橄榄|薄荷|薰衣草|丁香)[^(（]*画笔?[^(（]*(?:画[个只头幅张]?\s*)?[^画]*(?:画[个只头幅张]?\s*)?",
+    re.IGNORECASE,
+)
+
+# 背景色设置
+BACKGROUND_COLOR_PATTERN: Pattern[str] = re.compile(
+    r"(将|把|换|改|设置|变成)[^(（]*(?:画布|背景|底色|底)[^(（]*(?:为|成|做|换[为成]?)?[^(（]*(?:红|蓝|绿|黄|黑|白|紫|橙|青|粉|棕|灰|深蓝|浅蓝|天蓝|湖蓝|深绿|浅绿|草绿|墨绿|深红|浅红|玫红|酒红|深黄|浅黄|深紫|浅紫|深橙|浅橙|深棕|浅棕|深灰|浅灰|银|金|栗|褐|珊瑚|樱桃|柠檬|土|杏|咖啡|巧克|炭|铁|洋红|品红|粉蓝|粉绿|粉紫|粉橙|粉棕|粉灰|青紫|茶|驼|卡其|军绿|橄榄|薄荷|薰衣草|丁香)[^(（]*(?:色)?",
+    re.IGNORECASE,
 )
 
 # 数值提取（用于大小/粗细数字）
@@ -205,4 +218,29 @@ def match_system(text: str) -> str | None:
 
 def is_ai_command(text: str) -> bool:
     """判断是否是 AI 生成命令。"""
-    return AI_PATTERN.search(text) is not None
+    if AI_PATTERN.search(text):
+        return True
+    # 检测"用红色画笔画小猫"模式
+    if COLOR_BRUSH_DRAW_PATTERN.search(text):
+        # 排除形状命令
+        shape_reject = re.compile(
+            r"(圆|圆形|圈圈|圆圈|矩形|方形|正方|长方形|方框|三角|三角形|星星|五角星|直线|手绘|随便画|线条)",
+            re.IGNORECASE,
+        )
+        if shape_reject.search(text) is None:
+            return True
+    # 检测"画一幅+描述+画/图"模式（如"画一幅风景画"）
+    draw_image_pattern = re.compile(
+        r"画[一][幅张]?(张|幅)?[^(（]*(?:图|画|照片|插画|海报|图案|图画|画面)[^(（]*$",
+        re.IGNORECASE,
+    )
+    if draw_image_pattern.search(text):
+        return True
+    return False
+
+
+def is_background_color_command(text: str) -> bool:
+    """判断是否是背景色设置命令。"""
+    if not BACKGROUND_COLOR_PATTERN.search(text):
+        return False
+    return any(word in text for word in ("背景", "画布", "底色", "底"))

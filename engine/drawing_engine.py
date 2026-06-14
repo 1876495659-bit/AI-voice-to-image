@@ -23,6 +23,7 @@ import config
 from engine.operations import (
     AIImageOperation,
     AnchorShapeOperation,
+    BackgroundOperation,
     CircleOperation,
     ColorOperation,
     DeleteSelectedOperation,
@@ -31,6 +32,7 @@ from engine.operations import (
     FreehandOperation,
     LineDrawOperation,
     LineTool,
+    LabelSelectedOperation,
     MoveSelectedOperation,
     OperationType,
     PenTool,
@@ -61,6 +63,8 @@ class DrawingEngineSignals(QObject):
     state_changed = pyqtSignal(str, str, int)  # tool, color, size
     # 撤销/重做后需要重绘
     repaint = pyqtSignal()
+    # 背景色变更
+    background_changed = pyqtSignal(str)
     # 当前选中对象变化
     selection_changed = pyqtSignal(object)
     # 编辑命令失败
@@ -99,6 +103,7 @@ class DrawingEngine:
         self.current_tool: str = "pen"
         self.current_color: str = "#000000"
         self.current_size: int = 3
+        self.background_color: str = "#FFFFFF"
 
         self.canvas_width = canvas_width
         self.canvas_height = canvas_height
@@ -268,6 +273,12 @@ class DrawingEngine:
         """处理清空画布。"""
         self.clear()
 
+    def _handle_background(self, operation: DrawingOperation) -> None:
+        """处理背景色变更。"""
+        self.background_color = operation.color
+        self.history.push(operation)
+        self.signals.background_changed.emit(operation.color)
+
     def _handle_undo(self, operation: DrawingOperation) -> None:
         """处理语音撤销命令。"""
         self.undo()
@@ -344,6 +355,8 @@ class DrawingEngine:
 
         before = copy.deepcopy(target)
         target.color = operation.color
+        if operation.fill is not None:
+            target.filled = operation.fill
         operation.target_id = target.id
         operation.before = before
         operation.after = copy.deepcopy(target)
@@ -369,6 +382,22 @@ class DrawingEngine:
         operation.deleted_index = deleted_index
         self.history.push(operation)
         self._refresh_selection_after_history_change()
+        self.signals.repaint.emit()
+
+    def _handle_label_selected(self, operation: LabelSelectedOperation) -> None:
+        """给当前选中图形标注语义名称。"""
+        target = self._resolve_edit_target()
+        if target is None:
+            self.signals.edit_failed.emit("没有可编辑的图形，请先画一个图形")
+            return
+
+        before = copy.deepcopy(target)
+        target.semantic_label = operation.label
+        operation.target_id = target.id
+        operation.before = before
+        operation.after = copy.deepcopy(target)
+        self.history.push(operation)
+        self._set_selected_operation(target.id)
         self.signals.repaint.emit()
 
     def _handle_anchor_shape(self, operation: AnchorShapeOperation) -> None:
@@ -432,6 +461,14 @@ class DrawingEngine:
                 return target
 
         return self._find_recent_editable_operation()
+
+    def find_semantic_target(self, label: str = "") -> Optional[DrawingOperation]:
+        """查找当前或最近的语义对象。"""
+        if label:
+            for op in reversed(self.history.history):
+                if self._is_editable_operation(op) and getattr(op, "semantic_label", "") == label:
+                    return op
+        return self._resolve_edit_target()
 
     def _find_matching_editable_operation(
         self, shape: str, color: str,
@@ -791,7 +828,9 @@ class DrawingEngine:
         OperationType.SCALE_SELECTED: _handle_scale_selected,
         OperationType.RECOLOR_SELECTED: _handle_recolor_selected,
         OperationType.DELETE_SELECTED: _handle_delete_selected,
+        OperationType.LABEL_SELECTED: _handle_label_selected,
         OperationType.ANCHOR_SHAPE: _handle_anchor_shape,
+        OperationType.BACKGROUND: _handle_background,
         OperationType.CLEAR: _handle_clear,
         OperationType.UNDO: _handle_undo,
         OperationType.REDO: _handle_redo,

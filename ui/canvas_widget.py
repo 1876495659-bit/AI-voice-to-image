@@ -58,6 +58,7 @@ class CanvasWidget(QWidget):
         self._base_height = height
         self._zoom: int = 100
         self._selected_operation_id: Optional[str] = None
+        self._background_color: str = "#FFFFFF"
 
         self.setFixedSize(width, height)
         self.setStyleSheet("""
@@ -123,6 +124,9 @@ class CanvasWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.scale(self._zoom / 100, self._zoom / 100)
 
+        # 0. 绘制背景色
+        self._draw_background(painter)
+
         # 1. 绘制网格背景
         self._draw_grid(painter)
 
@@ -141,12 +145,22 @@ class CanvasWidget(QWidget):
 
         painter.end()
 
+    def _draw_background(self, painter: QPainter) -> None:
+        """填充画布背景色。"""
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self._background_color))
+        painter.drawRect(0, 0, self._base_width, self._base_height)
+
+    def set_background_color(self, color: str) -> None:
+        """设置背景色并重绘画布。"""
+        self._background_color = color
+        self.update()
+
     def _draw_grid(self, painter: QPainter) -> None:
         """绘制浅灰网格背景。"""
         grid_color = QColor("#F0F0F0")
         pen = QPen(grid_color, 0.5)
         painter.setPen(pen)
-        painter.setBrush(Qt.GlobalColor.white)
 
         spacing = 20
         w = self.width()
