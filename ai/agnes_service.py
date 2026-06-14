@@ -41,12 +41,7 @@ class AgnesImageService(AIService):
         self._cache: dict[str, bytes] = {}
 
     SKETCH_PREFIX = (
-        "simple line drawing, minimalist sketch, single color line art, "
-        "children's drawing, crayon sketch, simple colored pencil drawing, "
-        "clean white background, no shading, no gradients, "
-        "stick figure style, doodle art, hand-drawn outline, "
-        "monochrome illustration, simple black outline drawing, "
-        "no photorealistic, no cartoon sticker, no vibrant colors, "
+        "a simple black line drawing of "
     )
 
     _SKETCH_WORDS = frozenset((
