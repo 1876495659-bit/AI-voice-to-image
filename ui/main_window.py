@@ -306,6 +306,13 @@ class MainWindow(QMainWindow):
                 return
             self.engine.execute_multiple(agent_ops)
             self._record_picture_step(text)
+            # 对 AIImageOperation 显示加载提示
+            for op in agent_ops:
+                if isinstance(op, AIImageOperation):
+                    label = op.semantic_label or op.prompt
+                    if label:
+                        self.voice_panel.show_ai_loading(label)
+                        break  # 只显示一次
             prefix = "已执行: " if not manual else "手动执行: "
             self.voice_panel.show_action(f"{prefix}{self._describe_operations(agent_ops)}")
             return
@@ -317,6 +324,13 @@ class MainWindow(QMainWindow):
                 return
             self.engine.execute_multiple(result.operations)
             self._record_picture_step(text)
+            # 对 AIImageOperation 显示加载提示
+            for op in result.operations:
+                if isinstance(op, AIImageOperation):
+                    label = op.semantic_label or op.prompt
+                    if label:
+                        self.voice_panel.show_ai_loading(label)
+                        break
             prefix = "已执行: " if not manual else "手动执行: "
             self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
         elif result.is_uncertain:
@@ -362,6 +376,12 @@ class MainWindow(QMainWindow):
             return "已选中最近图形"
         if isinstance(op, AIImageOperation):
             label = getattr(op, "semantic_label", "") or getattr(op, "prompt", "")
+            # 检查同组操作数量
+            group_id = getattr(op, "group_id", "")
+            if group_id:
+                group_count = sum(1 for o in operations if getattr(o, "group_id", "") == group_id)
+                if group_count > 1:
+                    return f"已添加{group_count}个{label}"
             return f"已添加{label}"
         if isinstance(op, StrokeGroupOperation):
             label = getattr(op, "semantic_label", "") or "笔画"
@@ -390,6 +410,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_selected_operation(self.engine.selected_operation_id)
         self.canvas.update()
         self._refresh_latest_picture_snapshot()
+        self.voice_panel.clear_ai_loading()
 
     def _on_timeline_click(self, item) -> None:
         """点击时间线某项，撤销到该步。"""

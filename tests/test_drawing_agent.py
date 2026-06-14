@@ -9,7 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ai.drawing_agent import DrawingAgent
 from engine.drawing_engine import DrawingEngine
-from engine.operations import AIImageOperation, CircleOperation, LineDrawOperation, RecolorSelectedOperation
+from engine.operations import (
+    AIImageOperation,
+    CircleOperation,
+    LineDrawOperation,
+    RecolorSelectedOperation,
+    StrokeGroupOperation,
+)
 
 
 def test_agent_labels_recent_shape_as_sun() -> None:
@@ -111,6 +117,35 @@ def test_agent_recolors_named_ai_element() -> None:
     assert river.color == "#0000FF"
 
 
+def test_agent_places_apples_inside_tree_canopy_as_pen_strokes() -> None:
+    """“在树上画苹果”应变成树冠内的小笔画，而不是独立大图覆盖。"""
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    tree = StrokeGroupOperation(
+        color="#000000",
+        size=3,
+        semantic_label="树",
+        strokes=[
+            [(300, 120), (240, 180), (220, 260), (260, 330), (360, 340), (430, 280), (410, 180), (350, 120), (300, 120)],
+            [(315, 330), (310, 430), (350, 430), (345, 330)],
+        ],
+    )
+    engine.execute(tree)
+
+    agent = DrawingAgent()
+    operations = agent.plan("在树上画几个红色苹果", engine)
+
+    assert len(operations) == 3
+    assert all(isinstance(op, StrokeGroupOperation) for op in operations)
+    assert all(op.color == "#FF0000" for op in operations)
+    assert all(op.semantic_label == "苹果" for op in operations)
+
+    for op in operations:
+        points = [point for stroke in op.strokes for point in stroke]
+        assert points
+        assert all(220 <= x <= 430 for x, _ in points)
+        assert all(120 <= y <= 340 for _, y in points)
+
+
 if __name__ == "__main__":
     test_agent_labels_recent_shape_as_sun()
     test_agent_fills_current_circle_with_yellow()
@@ -118,4 +153,5 @@ if __name__ == "__main__":
     test_agent_generates_open_vocabulary_ai_element()
     test_agent_places_open_vocabulary_element_near_reference()
     test_agent_recolors_named_ai_element()
+    test_agent_places_apples_inside_tree_canopy_as_pen_strokes()
     print("test_drawing_agent: OK")

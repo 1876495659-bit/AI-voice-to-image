@@ -238,6 +238,17 @@ class VoiceFeedbackPanel(QWidget):
         if rms > 0.02:
             self.status_indicator.setStyleSheet("color: #34C759;")
 
+    def show_ai_loading(self, label: str) -> None:
+        """显示 AI 生成中的状态。"""
+        self.action_label.setText(f"正在生成{label}...")
+        self.action_label.setStyleSheet("color: #0071E3;")
+
+    def clear_ai_loading(self) -> None:
+        """清除 AI 生成中的状态。"""
+        if "正在生成" in self.action_label.text():
+            self.action_label.setText("")
+            self.action_label.setStyleSheet("color: #86868B;")
+
     def _pulse_opacity(self) -> None:
         self._pulse_val = 1.0 if self._pulse_val < 0.5 else 0.4
         alpha = int(self._pulse_val * 255)

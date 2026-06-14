@@ -249,6 +249,27 @@ class DrawingEngine:
         self._set_selected_operation(operation.id)
         self.signals.operation_added.emit(operation)
 
+        # 同组去重：检查同 group_id 的操作是否已有 image_bytes
+        group_id = getattr(operation, "group_id", "")
+        if group_id:
+            for prev_op in reversed(self.history.history[:-1]):
+                if getattr(prev_op, "group_id", "") == group_id and getattr(prev_op, "image_bytes", b""):
+                    # 已有生成的图片，直接复制
+                    operation.image_bytes = prev_op.image_bytes
+                    from ai.stroke_extractor import StrokeExtractor
+                    stroke_op = StrokeExtractor().extract(
+                        operation.image_bytes,
+                        position=operation.position,
+                        label=operation.semantic_label or operation.prompt,
+                        color=operation.color,
+                        size=operation.size,
+                    )
+                    stroke_op.id = operation.id
+                    self._replace_operation_in_history(operation.id, stroke_op)
+                    self._set_selected_operation(stroke_op.id)
+                    self.signals.repaint.emit()
+                    return
+
         # 异步调用 Agnes 生图
         threading.Thread(
             target=self._generate_ai_image,
@@ -260,6 +281,7 @@ class DrawingEngine:
         """后台线程调用 Agnes 生成图片。
 
         成功后更新 operation.image_bytes 并重绘画布。
+        如果 operation 属于一组（group_id），还更新同组其他操作。
         失败时通过 edit_failed 信号通知 UI。
         """
         image_bytes = self.ai_service.generate_image(operation.prompt)
@@ -276,6 +298,15 @@ class DrawingEngine:
             stroke_op.id = operation.id
             self._replace_operation_in_history(operation.id, stroke_op)
             self._set_selected_operation(stroke_op.id)
+
+            # 更新同组其他操作
+            group_id = getattr(operation, "group_id", "")
+            if group_id:
+                for prev_op in self.history.history:
+                    oid = getattr(prev_op, "id", "")
+                    if oid != operation.id and getattr(prev_op, "group_id", "") == group_id:
+                        prev_op.image_bytes = image_bytes
+
             self.signals.repaint.emit()
         else:
             # 在主线程中发出错误信号

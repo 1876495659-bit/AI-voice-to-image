@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import random
 import re
+import uuid
 from typing import List, Optional
 
 from engine.drawing_engine import DrawingEngine
@@ -245,7 +246,9 @@ class DrawingAgent:
         if self._is_draw_line(text):
             return self._plan_draw_line(text, canvas_elements, ops, engine)
 
-        return self._plan_draw_ai_image(text, canvas_elements, engine)
+        # 提取数量，支持批量绘制
+        quantity = self._extract_quantity(text)
+        return self._plan_draw_ai_image(text, canvas_elements, engine, quantity)
 
     def _is_draw_shape(self, text: str) -> bool:
         return any(kw in text for kw in [
@@ -265,18 +268,183 @@ class DrawingAgent:
         text: str,
         canvas_elements: List[dict],
         engine: DrawingEngine,
+        quantity: int = 1,
     ) -> List[DrawingOperation]:
-        """规划 AI 生图操作。"""
-        # 提取 prompt（去除"画一个"等前缀）
+        """规划 AI 生图操作。
+
+        当 quantity > 1 时，围绕参照物环形分布 N 个实例，
+        共享同一个 group_id 以复用 API 调用结果。
+        """
         prompt = self._extract_ai_prompt(text)
         if not prompt:
             prompt = text
+
+        ref_elem = self._find_reference_element(text, canvas_elements)
+
+        if ref_elem and self._should_embed_fruit_in_tree(text, prompt, ref_elem):
+            return self._plan_tree_fruit_strokes(prompt, ref_elem, quantity, text)
+
+        if quantity > 1 and ref_elem:
+            # 批量绘制：环形分布在参照物周围
+            return self._plan_batch_ai_image(
+                prompt, ref_elem, quantity, text, engine, canvas_elements,
+            )
 
         pos = self._compute_ai_image_position(text, canvas_elements, engine)
         op = AIImageOperation(prompt=self._build_element_prompt(prompt), position=pos)
         op.semantic_label = self._extract_semantic_label(prompt)
         op.color = self._extract_color_from_text(text)
         return [op]
+
+    def _plan_batch_ai_image(
+        self,
+        prompt: str,
+        ref_elem: dict,
+        quantity: int,
+        text: str,
+        engine: DrawingEngine,
+        canvas_elements: List[dict],
+    ) -> List[DrawingOperation]:
+        """批量绘制多个相同元素，围绕参照物环形分布。"""
+        ops: List[DrawingOperation] = []
+        bbox = ref_elem["bbox"]
+        cx, cy = bbox["cx"], bbox["cy"]
+
+        # 树冠区域：上半部分
+        if ref_elem["type"] == "tree":
+            # 树冠在树的上半部分
+            placement_cy = int((bbox["top"] + bbox["cy"]) / 2)
+        else:
+            placement_cy = int(cy)
+
+        placement_cx = int(cx)
+        # 半径随数量扩展，避免重叠
+        radius = 60 + min(quantity * 8, 40)
+
+        group_id = uuid.uuid4().hex[:8]
+
+        for i in range(quantity):
+            angle_deg = -90 + (360.0 / quantity) * i
+            rad = math.radians(angle_deg)
+            x = int(placement_cx + radius * math.cos(rad))
+            y = int(placement_cy + radius * math.sin(rad))
+            x = max(0, min(engine.canvas_width - 400, x))
+            y = max(0, min(engine.canvas_height - 400, y))
+
+            label = self._extract_semantic_label(prompt)
+            if i == 0:
+                semantic_label = f"一个{label}"
+            else:
+                semantic_label = f"另一个{label}"
+
+            op = AIImageOperation(
+                prompt=self._build_element_prompt(prompt),
+                position=(x, y),
+                group_id=group_id,
+            )
+            op.semantic_label = semantic_label
+            op.color = self._extract_color_from_text(text)
+            ops.append(op)
+
+        return ops
+
+    def _should_embed_fruit_in_tree(self, text: str, prompt: str, ref_elem: dict) -> bool:
+        """判断生图构图是否应嵌入参照物，而不是生成独立大元素。"""
+        if ref_elem.get("type") != "tree":
+            return False
+        target_text = f"{text}{prompt}"
+        is_fruit = any(word in target_text for word in ("苹果", "果子", "果实", "水果"))
+        relation_on_tree = any(word in text for word in ("树上", "树的上面", "树冠", "长在树"))
+        return is_fruit and relation_on_tree
+
+    def _plan_tree_fruit_strokes(
+        self,
+        prompt: str,
+        ref_elem: dict,
+        quantity: int,
+        text: str,
+    ) -> List[DrawingOperation]:
+        """把“树上苹果”规划为树冠内的小笔画，避免独立贴图覆盖。"""
+        bbox = ref_elem["bbox"]
+        left, right = int(bbox["left"]), int(bbox["right"])
+        top, bottom = int(bbox["top"]), int(bbox["bottom"])
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+
+        canopy_top = top
+        canopy_bottom = int(top + height * 0.55)
+        canopy_left = int(left + width * 0.10)
+        canopy_right = int(right - width * 0.10)
+        quantity = max(1, min(quantity, 8))
+        radius = max(6, min(16, int(min(width, height) * 0.045)))
+        color = self._extract_color_from_text(text)
+        label = self._extract_semantic_label(prompt)
+        if "果" in label and "苹果" not in label:
+            label = "苹果"
+        if "苹果" in text or "苹果" in prompt:
+            label = "苹果"
+
+        placements = self._fruit_canopy_positions(
+            canopy_left, canopy_right, canopy_top, canopy_bottom, quantity,
+        )
+        ops: List[DrawingOperation] = []
+        for cx, cy in placements:
+            op = StrokeGroupOperation(
+                color=color,
+                size=max(2, self._extract_size(text)),
+                semantic_label=label or "苹果",
+                strokes=self._apple_strokes(cx, cy, radius),
+            )
+            ops.append(op)
+        return ops
+
+    def _fruit_canopy_positions(
+        self,
+        left: int,
+        right: int,
+        top: int,
+        bottom: int,
+        quantity: int,
+    ) -> List[tuple]:
+        """在树冠内给果实生成稳定、分散的位置。"""
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        anchors = [
+            (0.30, 0.42), (0.52, 0.30), (0.72, 0.46), (0.42, 0.62),
+            (0.62, 0.66), (0.20, 0.58), (0.82, 0.30), (0.50, 0.50),
+        ]
+        return [
+            (int(left + width * fx), int(top + height * fy))
+            for fx, fy in anchors[:quantity]
+        ]
+
+    def _apple_strokes(self, cx: int, cy: int, radius: int) -> List[List[tuple]]:
+        """用几笔画一个小苹果轮廓，保留手绘风格。"""
+        r = radius
+        outline = [
+            (cx - r, cy - r // 5),
+            (cx - r, cy - r // 2),
+            (cx - r // 2, cy - r),
+            (cx, cy - r // 2),
+            (cx + r // 2, cy - r),
+            (cx + r, cy - r // 2),
+            (cx + r, cy + r // 5),
+            (cx + r // 2, cy + r),
+            (cx, cy + r),
+            (cx - r // 2, cy + r),
+            (cx - r, cy - r // 5),
+        ]
+        stem = [(cx, cy - r // 2), (cx + max(2, r // 4), cy - r - max(4, r // 3))]
+        leaf = [
+            (cx + max(2, r // 4), cy - r),
+            (cx + r, cy - r - max(2, r // 5)),
+            (cx + max(2, r // 3), cy - r + max(2, r // 5)),
+        ]
+        shine = [
+            (cx - r // 2, cy - r // 5),
+            (cx - r // 3, cy + r // 4),
+        ]
+        return [outline, stem, leaf, shine]
 
     def _plan_draw_line(
         self,
@@ -562,6 +730,7 @@ class DrawingAgent:
             "树": "tree", "树": "tree", "树": "tree", "树": "tree",
             "草": "grass", "河": "river", "河": "river", "河": "river", "河": "river",
             "花": "flower", "花": "flower", "山": "mountain", "云": "cloud",
+            "苹果": "apple", "果子": "fruit", "果实": "fruit", "水果": "fruit",
             "太阳": "sun", "月亮": "moon", "星星": "star", "星": "star",
             "鸟": "bird", "鸟": "bird", "猫": "cat", "狗": "dog",
             "人": "person", "房子": "house", "房子": "house", "房子": "house",
@@ -907,6 +1076,30 @@ class DrawingAgent:
 
     # ── 工具方法 ──────────────────────────────────────────
 
+    def _extract_quantity(self, text: str) -> int:
+        """从文本中提取数量。
+
+        例如 "在大树上画三个苹果" → 3
+        "在大树上画一个苹果" → 1
+        "在大树上画几个苹果" → 3（默认）
+        """
+        qty_map: dict[str, int] = {
+            "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            "2": 2, "3": 3, "4": 4, "5": 5,
+            "两": 2,
+        }
+
+        # 查数字
+        for word, num in qty_map.items():
+            if word in text:
+                return num
+
+        # "几个"默认 3
+        if "几" in text:
+            return 3
+
+        return 1
+
     def _extract_ai_prompt(self, text: str) -> str:
         """从 AI 生成命令中提取提示词。"""
         text = self._strip_reference_clause(text)
@@ -918,6 +1111,11 @@ class DrawingAgent:
             "生成一个", "生成一只", "生成一幅", "生成一张", "生成一条",
             "做一个", "来一个", "来一只", "来一幅", "来一张",
             "画一", "生成一", "做一", "来一",
+            # 数量前缀（含中文数字）
+            "画三个", "画两个", "画四个", "画五个", "画六个", "画七个", "画八个", "画九个", "画十个",
+            "画两只", "画五只",
+            "画三", "画两", "画四", "画五", "画六", "画七", "画八", "画九", "画十",
+            "画几",
             "画", "生成", "创建", "做", "来",
         ]
         prompt = text
@@ -943,7 +1141,9 @@ class DrawingAgent:
     def _extract_semantic_label(self, element: str) -> str:
         """从元素描述中提取后续可引用的语义标签。"""
         label = element.strip(" 。,.！？!?,")
-        label = re.sub(r"^(一些|几个|几颗|几条|一棵|一颗|一座|一个|一只|一条|一片|一朵|一辆|一幅|一张)", "", label)
+        label = re.sub(r"^(一些|几个|几颗|几条|一棵|一颗|一座|一个|一只|一条|一片|一朵|一辆|一幅|一张|三个|两个|四个|五个|六个|七个|八个|九个|十个|五只|两只)", "", label)
+        # 去掉量词前缀（如"朵花" → "花"）
+        label = re.sub(r"^[朵株棵个条只头张幅]", "", label)
         label = re.sub(r"(的|漂亮的|可爱的|简单的|单色的|黑色|红色|蓝色|绿色|黄色|白色|紫色|橙色|棕色|灰色|粉色)", "", label)
         return label.strip() or element.strip()
 

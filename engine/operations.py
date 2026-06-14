@@ -262,6 +262,7 @@ class AIImageOperation(DrawingOperation):
     prompt: str = ""
     image_bytes: bytes = b""
     position: tuple = field(default=(0, 0))
+    group_id: str = ""  # 同组操作共享同一张生成的图片
 
 
 @dataclass
