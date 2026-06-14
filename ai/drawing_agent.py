@@ -258,6 +258,7 @@ class DrawingAgent:
     def _is_draw_line(self, text: str) -> bool:
         return any(kw in text for kw in [
             "直线", "横线", "竖线", "曲线", "线条", "波浪线",
+            "河", "河流", "小河", "小溪", "溪流", "水面", "湖", "池塘",
         ])
 
     def _is_draw_ai_image(self, text: str) -> bool:
@@ -506,6 +507,10 @@ class DrawingAgent:
 
         # 判断元素类型
         if "河" in text or "溪" in text or "水" in text:
+            ref_elem = self._find_reference_element(text, elements)
+            if ref_elem:
+                return self._plan_contextual_river(text, ref_elem, color, size, cw, ch)
+
             # 河流：在画面下部从左到右的波浪线
             # 找所有非大型元素的最低点，放在其下方
             min_bottom = ch * 0.5
@@ -592,6 +597,83 @@ class DrawingAgent:
             ops.append(LineDrawOperation(color=color, size=size,
                                          start=(20, y), end=(cw - 20, y)))
 
+        return ops
+
+    def _plan_contextual_river(
+        self,
+        text: str,
+        ref_elem: dict,
+        color: str,
+        size: int,
+        cw: int,
+        ch: int,
+    ) -> List[DrawingOperation]:
+        """根据参照物规划河流，让它作为画面背景/场景线条融入画布。"""
+        bbox = ref_elem["bbox"]
+        margin = 26
+        direction = self._extract_direction(text)
+
+        if direction == "right" or ("右" in text and "左" not in text):
+            start_x = int(min(cw - 80, bbox["right"] + margin))
+            end_x = cw - 40
+            base_y = int(min(ch - 110, max(120, bbox["cy"] + 35)))
+        elif direction == "left":
+            start_x = 40
+            end_x = int(max(80, bbox["left"] - margin))
+            base_y = int(min(ch - 110, max(120, bbox["cy"] + 35)))
+        elif direction == "below":
+            start_x = 40
+            end_x = cw - 40
+            base_y = int(min(ch - 90, bbox["bottom"] + 55))
+        else:
+            start_x = int(max(40, bbox["left"] - 60))
+            end_x = int(min(cw - 40, bbox["right"] + 220))
+            base_y = int(min(ch - 100, bbox["bottom"] + 45))
+
+        if end_x - start_x < 80:
+            start_x = max(40, min(start_x, cw - 160))
+            end_x = min(cw - 40, start_x + 140)
+
+        return self._river_strokes(start_x, end_x, base_y, color, size)
+
+    def _river_strokes(
+        self,
+        start_x: int,
+        end_x: int,
+        base_y: int,
+        color: str,
+        size: int,
+    ) -> List[DrawingOperation]:
+        """用多条波浪线画河流，保留画笔感和整体画面连贯性。"""
+        ops: List[DrawingOperation] = []
+        segments = max(8, min(32, int((end_x - start_x) / 18)))
+        offsets = (-18, 0, 18)
+        for row, offset in enumerate(offsets):
+            points = []
+            for i in range(segments + 1):
+                t = i / segments
+                x = int(start_x + (end_x - start_x) * t)
+                perspective = int(t * 36)
+                wave = int(math.sin(i * 0.85 + row * 0.7) * (10 + row * 2))
+                y = int(base_y + offset + perspective + wave)
+                points.append((x, y))
+            for i in range(len(points) - 1):
+                op = LineDrawOperation(color=color, size=size, start=points[i], end=points[i + 1])
+                op.semantic_label = "河流"
+                ops.append(op)
+
+        for i in range(4):
+            t = (i + 1) / 5
+            x0 = int(start_x + (end_x - start_x) * t)
+            y0 = int(base_y + 42 + math.sin(i) * 10)
+            op = LineDrawOperation(
+                color=color,
+                size=max(1, size - 1),
+                start=(x0 - 18, y0),
+                end=(x0 + 24, y0 + 8),
+            )
+            op.semantic_label = "河流"
+            ops.append(op)
         return ops
 
     def _plan_draw_shape(

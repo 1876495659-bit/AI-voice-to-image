@@ -80,21 +80,45 @@ def test_agent_generates_open_vocabulary_ai_element() -> None:
 
 
 def test_agent_places_open_vocabulary_element_near_reference() -> None:
-    """新元素应能引用之前由模型生成的语义元素位置。"""
+    """普通开放词汇元素仍能引用之前由模型生成的语义元素位置。"""
     engine = DrawingEngine(canvas_width=800, canvas_height=1080)
     tree = AIImageOperation(prompt="树", position=(200, 80))
     tree.semantic_label = "树"
     engine.history.push(tree)
 
     agent = DrawingAgent()
-    operations = agent.plan("在树的下面画一条小河", engine)
+    operations = agent.plan("在树的下面画一座房子", engine)
 
     assert len(operations) == 1
     op = operations[0]
     assert isinstance(op, AIImageOperation)
-    assert "小河" in op.prompt
-    assert op.semantic_label == "小河"
+    assert "房子" in op.prompt
+    assert op.semantic_label == "房子"
     assert op.position[1] >= 500
+
+
+def test_agent_draws_river_right_of_tree_as_canvas_lines() -> None:
+    """“在大树右边画河流”应生成融入画布的线条，而不是独立 AI 图片。"""
+    engine = DrawingEngine(canvas_width=900, canvas_height=600)
+    tree = StrokeGroupOperation(
+        color="#000000",
+        size=3,
+        semantic_label="大树",
+        strokes=[
+            [(240, 150), (190, 210), (180, 310), (250, 390), (360, 380), (420, 300), (390, 180), (300, 130), (240, 150)],
+            [(285, 370), (280, 500), (330, 500), (325, 370)],
+        ],
+    )
+    engine.execute(tree)
+
+    operations = DrawingAgent().plan("在大树的右边画一条河流", engine)
+
+    assert operations
+    assert not any(isinstance(op, AIImageOperation) for op in operations)
+    assert all(isinstance(op, LineDrawOperation) for op in operations)
+    assert all(op.semantic_label == "河流" for op in operations[:5])
+    assert min(min(op.start[0], op.end[0]) for op in operations) >= 420
+    assert max(max(op.start[0], op.end[0]) for op in operations) <= 860
 
 
 def test_agent_recolors_named_ai_element() -> None:
@@ -177,6 +201,7 @@ if __name__ == "__main__":
     test_agent_adds_sun_details_around_labeled_circle()
     test_agent_generates_open_vocabulary_ai_element()
     test_agent_places_open_vocabulary_element_near_reference()
+    test_agent_draws_river_right_of_tree_as_canvas_lines()
     test_agent_recolors_named_ai_element()
     test_agent_places_apples_inside_tree_canopy_as_pen_strokes()
     test_agent_places_exact_two_apples_on_tree_without_new_ai_image()
