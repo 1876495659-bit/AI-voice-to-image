@@ -48,17 +48,11 @@ class AgnesImageService(AIService):
         "棕": "brown", "灰": "gray", "粉": "pink",
     }
 
-    # 简笔画风格引导
-    _SIMPLE_LINE_ART = (
+    # 简笔画风格引导 — 所有默认生成统一为此风格
+    _LINE_ART = (
         "simple single-color line drawing, clean white background, "
         "single color outline, no fill colors, no shading, no gradients, "
         "no photorealistic, no cartoon illustration, "
-    )
-    _CARTOON_DOODLE = (
-        "simple cartoon doodle, children's coloring book illustration, "
-        "bold outlines, flat fill colors, cute character design, "
-        "white background, no shading, no realistic texture, "
-        "no photograph, no detailed illustration, "
     )
     _REALISTIC_WORDS = frozenset((
         "写实", "真实", "照片", "photorealistic", "realistic",
@@ -94,10 +88,8 @@ class AgnesImageService(AIService):
     def _enhance_for_sketch_style(self, prompt: str) -> str:
         """确保提示词导向合适的风格。
 
-        优先级：
-        1. 用户要求写实 → 不加引导，自由生成
-        2. 用户指定颜色 → 单色线条画 + 指定颜色
-        3. 用户无颜色指定 → 卡通简笔画
+        所有默认生成统一为单色线条画，黑色墨水。
+        如果用户指定了颜色则用指定颜色；如果用户要求写实则不加引导。
         """
         if any(w in prompt for w in self._REALISTIC_WORDS):
             return prompt
@@ -111,18 +103,13 @@ class AgnesImageService(AIService):
                 cleaned_prompt = cleaned_prompt[len(prefix):]
                 break
 
-        if color_en:
-            # 有颜色 → 单色线条画风格
-            return (
-                f"a simple single-color line drawing of a "
-                f"{cleaned_prompt} drawn with {color_en} ink, "
-                f"{self._SIMPLE_LINE_ART.strip()}"
-            )
-        else:
-            # 无颜色 → 卡通简笔画
-            if any(w in prompt.lower() for w in self._SKETCH_WORDS):
-                return f"{self._CARTOON_DOODLE}{cleaned_prompt}"
-            return f"{self._CARTOON_DOODLE}{cleaned_prompt}"
+        # 默认黑色墨水，有颜色则用指定色
+        ink_color = color_en if color_en else "black"
+        return (
+            f"a simple single-color line drawing of a "
+            f"{cleaned_prompt} drawn with {ink_color} ink, "
+            f"{self._LINE_ART.strip()}"
+        )
 
     def generate_image(self, prompt: str) -> Optional[bytes]:
         """使用 Agnes Image 2.1 Flash 生成图像。
