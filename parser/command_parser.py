@@ -579,7 +579,7 @@ class CommandParser:
             return "below"
         if "里面" in text:
             return "inside"
-        # "三角形上" / "圆圈上" / "三角形下" / "圆圈下"
+        # "三角形上" / "圆圈上" / "三角形下" / "圆圈下"（几何形状）
         if re.search(r"[三角圆星矩线形圈](上)", text):
             return "above"
         if re.search(r"[三角圆星矩线形圈](下)", text):
@@ -673,6 +673,7 @@ class CommandParser:
 
         例如 "蓝色圆圈要在直线的左上方" → ("circle", "蓝")
         例如 "圆圈要在直线的左上方" → ("circle", "")
+        例如 "在乌龟脚下面" → ("ai_image", "")
 
         Returns:
             (shape_key, color_name) 或 ("", "") 如果无法识别
@@ -701,7 +702,36 @@ class CommandParser:
                 first_pos = m.start()
                 shape = shape_key
 
+        # 如果没匹配到几何形状，尝试匹配 AI 图像（通过动物/对象关键词）
+        if not shape:
+            ai_keyword = self._extract_ai_anchor_keyword(text)
+            if ai_keyword:
+                return ("ai_image", color)
+
         return (shape, color)
+
+    def _extract_ai_anchor_keyword(self, text: str) -> str:
+        """从文本中提取 AI 图像的参照关键词（动物/对象名）。
+
+        例如 "乌龟"、"小猫"、"小狗"、"小兔子" 等。
+        返回最长匹配的关键词或空字符串。
+        """
+        # 按最长匹配优先排序
+        ai_keywords = [
+            "小老鼠", "猫头鹰", "蝴蝶", "蜻蜓", "蜜蜂", "蚂蚁", "蜘蛛", "螃蟹",
+            "海豚", "鲸", "企鹅", "鹦鹉", "松鼠", "熊猫", "兔子", "小兔子",
+            "小狗", "小猫", "小鸟", "小鱼", "小花", "小树",
+            "小老鼠",
+            "猫", "狗", "鼠", "兔", "鸟", "鱼", "星", "花", "树", "草", "人",
+            "熊", "狮", "虎", "象", "马", "羊", "牛", "猪", "鸡", "鸭", "鹅",
+            "蛙", "蛇", "龟", "乌龟", "虫", "蝶", "蜂", "鲤", "风景", "图案",
+            "动物", "植物", "人物", "场景", "卡通", "房子", "房屋",
+            "建筑", "城市", "乡村", "海洋", "森林", "龙", "凤",
+        ]
+        for kw in ai_keywords:
+            if kw in text:
+                return kw
+        return ""
 
     def _extract_brush_color(self, text: str) -> str:
         """理解“红笔/蓝笔/黄笔”这类口语颜色。"""

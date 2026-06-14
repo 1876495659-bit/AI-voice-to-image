@@ -487,12 +487,22 @@ class DrawingEngine:
                 continue
 
             # 匹配形状
-            if shape and shape in shape_map:
+            if shape == "ai_image":
+                if not isinstance(op, AIImageOperation):
+                    continue
+                # AI 图像按 prompt 中的关键词匹配
+                if color:
+                    prompt = getattr(op, "prompt", "")
+                    if color not in prompt:
+                        continue
+                # 找到最近一个 AI 图像
+                return op
+            elif shape and shape in shape_map:
                 if not isinstance(op, shape_map[shape]):
                     continue
 
-            # 匹配颜色
-            if color:
+            # 匹配颜色（仅几何形状）
+            if color and shape != "ai_image":
                 op_color = getattr(op, "color", "")
                 if op_color and not self._color_matches(op_color, color):
                     continue
