@@ -247,3 +247,80 @@ class AgnesImageService(AIService):
     def clear_cache(self) -> None:
         """清除图像缓存。"""
         self._cache.clear()
+
+    def extend_image(self, prev_image_bytes: bytes, prompt: str) -> Optional[bytes]:
+        """图生图：在已有图片基础上进行修改/扩展。
+
+        将 prev_image_bytes 转换为 data URI，作为 image 字段传入 API。
+        自动为提示词追加手绘风格引导。
+
+        Args:
+            prev_image_bytes: 上一轮的生成结果图片。
+            prompt: 新的修改/扩展提示词。
+
+        Returns:
+            新图片的二进制数据 (PNG/JPEG)，失败返回 None。
+        """
+        if not self._api_key:
+            logger.error("AGNES_API_KEY 未配置")
+            return None
+
+        # 手绘风格化
+        sketch_prompt = self._enhance_for_sketch_style(prompt)
+
+        # 转换为 data URI
+        import base64
+        b64 = base64.b64encode(prev_image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{b64}"
+
+        try:
+            resp = requests.post(
+                f"{self._api_base}/v1/images/generations",
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": config.AGNES_IMAGE_MODEL,
+                    "prompt": sketch_prompt,
+                    "image": data_uri,  # I2I 字段名：image
+                    "size": config.AGNES_IMAGE_SIZE,
+                    "n": 1,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            images = data.get("data", [])
+            if not images:
+                logger.error("Agnes I2I 生成返回空数据")
+                return None
+
+            img = images[0]
+            if img.get("url"):
+                img_resp = requests.get(img["url"], timeout=30)
+                img_resp.raise_for_status()
+                image_bytes = img_resp.content
+            elif img.get("b64_json"):
+                image_bytes = base64.b64decode(img["b64_json"])
+            else:
+                logger.error("Agnes I2I 生成返回空数据")
+                return None
+
+            if image_bytes:
+                # I2I 结果不入缓存（每次不同）
+                logger.info(f"Agnes I2I 生成成功: {len(image_bytes)} bytes")
+                return image_bytes
+
+            return None
+
+        except requests.exceptions.Timeout:
+            logger.error("Agnes I2I 请求超时")
+            return None
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Agnes I2I HTTP 错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Agnes I2I 生成失败: {e}")
+            return None

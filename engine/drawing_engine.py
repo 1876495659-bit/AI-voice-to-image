@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import threading
 from typing import List, Optional
 
@@ -47,6 +48,8 @@ from engine.operations import (
     TriangleOperation,
 )
 from engine.undo_history import UndoHistory
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +117,10 @@ class DrawingEngine:
         from ai.agnes_service import AgnesImageService
         self.ai_service = AgnesImageService()
 
+        # I2I 状态：累计提示词 + 上一轮图片
+        self._i2i_prompt_history: List[str] = []
+        self._i2i_current_image_bytes: Optional[bytes] = None
+
     # --- 核心操作 ---
 
     def execute(self, operation: DrawingOperation) -> None:
@@ -141,6 +148,74 @@ class DrawingEngine:
         for op in operations:
             self.execute(op)
 
+    def execute_i2i(self, prompt_delta: str) -> bool:
+        """兼容旧入口：已有画布时按整幅画布继续迭代。"""
+        if not self._i2i_current_image_bytes:
+            logger.warning("I2I: 没有上一轮图片，无法执行图生图")
+            return False
+        return self.execute_canvas_i2i(prompt_delta)
+
+    def execute_canvas_i2i(self, prompt_delta: str) -> bool:
+        """让模型把整张白布当作一幅画逐步生成/修改。
+
+        首次调用走文生图；后续调用把上一轮整幅画布图片作为输入，
+        要求模型在原图不变的基础上只完成用户新增的这一步。
+        每次结果都作为一个 full_canvas 操作进入历史，以支持撤销到任意创作步骤。
+        """
+        prompt_delta = prompt_delta.strip()
+        if not prompt_delta:
+            return False
+
+        is_first_step = self._i2i_current_image_bytes is None
+        prompt = self._build_canvas_i2i_prompt(prompt_delta, is_first_step)
+
+        if is_first_step:
+            image_bytes = self.ai_service.generate_image(prompt)
+        else:
+            image_bytes = self.ai_service.extend_image(
+                self._i2i_current_image_bytes or b"", prompt,
+            )
+
+        if not image_bytes:
+            logger.error("整幅画布 AI 生成失败")
+            self.signals.edit_failed.emit("AI 生成失败，请稍后重试")
+            return False
+
+        self._i2i_prompt_history.append(prompt_delta)
+        self._i2i_current_image_bytes = image_bytes
+
+        op = AIImageOperation(
+            prompt=prompt_delta,
+            image_bytes=image_bytes,
+            position=(0, 0),
+            full_canvas=True,
+        )
+        op.semantic_label = "整幅画"
+        self.history.push(op)
+        self._set_selected_operation(None)
+        self.signals.operation_added.emit(op)
+        self.signals.repaint.emit()
+        return True
+
+    def _build_canvas_i2i_prompt(self, prompt_delta: str, is_first_step: bool) -> str:
+        style = (
+            "单色黑色简笔画线稿，干净白色背景，像用户用同一支黑色画笔画在同一张白纸上，"
+            "不要照片风格，不要彩色填充，不要方形贴图边框，不要生成独立小图片。"
+        )
+        if is_first_step:
+            return f"{style} 在整张空白画布中按照用户要求创作第一步：{prompt_delta}"
+
+        previous = "；".join(self._i2i_prompt_history)
+        return (
+            f"{style} 这是逐步绘画的下一步。已有画面步骤：{previous}。"
+            f"请保持原有画面、构图、比例和位置不变，只根据用户的新要求自然地补画或修改：{prompt_delta}。"
+            "新增内容必须融入整幅画，例如树上的苹果应长在树冠或树枝上，河里的鱼应位于河流内部。"
+        )
+
+    def is_i2i_mode(self) -> bool:
+        """是否处于 I2I 迭代模式（已生成过第一张图）。"""
+        return self._i2i_current_image_bytes is not None
+
     # --- 撤销/重做 ---
 
     def undo(self) -> Optional[DrawingOperation]:
@@ -149,6 +224,7 @@ class DrawingEngine:
         if op is not None:
             self._revert_edit_operation(op)
             self._refresh_selection_after_history_change()
+            self._refresh_i2i_state_from_history()
             self.signals.repaint.emit()
         return op
 
@@ -158,12 +234,15 @@ class DrawingEngine:
         if op is not None:
             self._apply_edit_after(op)
             self._refresh_selection_after_history_change(preferred_id=self._edit_target_id(op))
+            self._refresh_i2i_state_from_history()
             self.signals.repaint.emit()
         return op
 
     def clear(self) -> None:
-        """清空画布：清空历史并通知 UI。"""
+        """清空画布：清空历史并重置 I2I 状态。"""
         self.history.clear()
+        self._i2i_current_image_bytes = None
+        self._i2i_prompt_history.clear()
         self._set_selected_operation(None)
         self.signals.canvas_cleared.emit()
 
@@ -244,7 +323,10 @@ class DrawingEngine:
         self.signals.operation_added.emit(operation)
 
     def _handle_ai_image(self, operation: AIImageOperation) -> None:
-        """处理 AI 生成图片。"""
+        """处理 AI 生成图片。
+
+        首次生成成功后，进入 I2I 模式，保存图片用于后续图生图。
+        """
         self.history.push(operation)
         self._set_selected_operation(operation.id)
         self.signals.operation_added.emit(operation)
@@ -281,11 +363,26 @@ class DrawingEngine:
         """后台线程调用 Agnes 生成图片。
 
         成功后更新 operation.image_bytes 并重绘画布。
+        首次生成成功后，进入 I2I 模式保存图片。
         如果 operation 属于一组（group_id），还更新同组其他操作。
         失败时通过 edit_failed 信号通知 UI。
         """
         image_bytes = self.ai_service.generate_image(operation.prompt)
         if image_bytes:
+            if getattr(operation, "full_canvas", False):
+                operation.image_bytes = image_bytes
+                self._i2i_current_image_bytes = image_bytes
+                self._i2i_prompt_history.append(operation.prompt)
+                self._set_selected_operation(None)
+                self.signals.repaint.emit()
+                return
+
+            # 首次生成成功 → 进入 I2I 模式
+            if not self._i2i_current_image_bytes:
+                self._i2i_current_image_bytes = image_bytes
+                self._i2i_prompt_history = [operation.prompt]
+                logger.info("I2I 模式已激活")
+
             from ai.stroke_extractor import StrokeExtractor
 
             stroke_op = StrokeExtractor().extract(
@@ -483,6 +580,27 @@ class DrawingEngine:
         """更新当前选中对象并通知 UI。"""
         self.selected_operation_id = operation_id
         self.signals.selection_changed.emit(operation_id)
+
+    def _refresh_i2i_state_from_history(self) -> None:
+        """从历史中恢复最新的整幅画布图片状态。"""
+        self._i2i_prompt_history = [
+            op.prompt
+            for op in self.history.history
+            if isinstance(op, AIImageOperation)
+            and getattr(op, "full_canvas", False)
+            and getattr(op, "prompt", "")
+        ]
+
+        for op in reversed(self.history.history):
+            if (
+                isinstance(op, AIImageOperation)
+                and getattr(op, "full_canvas", False)
+                and getattr(op, "image_bytes", b"")
+            ):
+                self._i2i_current_image_bytes = op.image_bytes
+                return
+
+        self._i2i_current_image_bytes = None
 
     def _resolve_edit_target(
         self, target_shape: str = "", target_color: str = "",

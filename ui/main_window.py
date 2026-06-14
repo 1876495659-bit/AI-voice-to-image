@@ -306,6 +306,27 @@ class MainWindow(QMainWindow):
         # 同步画布操作列表到 agent（供智能位置规划使用）
         canvas_ops = self.engine.get_history()
 
+        if self._should_use_model_canvas(text):
+            self.voice_panel.show_ai_loading("整幅画")
+            if self.engine.execute_canvas_i2i(text):
+                self._record_picture_step(text)
+                self.voice_panel.show_action(f"已更新整幅画：{text}")
+                self.voice_panel.clear_ai_loading()
+                return
+            self.voice_panel.clear_ai_loading()
+            logger.warning("整幅画布模型生成失败，回退到本地规划流程")
+
+        # I2I 模式：如果已经生成过第一张图，且用户是在扩展画面
+        if self.engine.is_i2i_mode() and self._is_i2i_extension(text, canvas_ops):
+            delta = self.drawing_agent.build_i2i_delta(text, canvas_ops)
+            if self.engine.execute_i2i(delta):
+                self._record_picture_step(text)
+                self.voice_panel.show_action(f"已扩展：{delta}")
+                self.voice_panel.clear_ai_loading()
+                return
+            # I2I 失败，回退到正常流程
+            logger.warning("I2I 执行失败，回退到正常流程")
+
         agent_ops = self.drawing_agent.plan(text, self.engine, canvas_ops)
         if agent_ops:
             if self._requires_edit_target(agent_ops) and not self.engine.has_edit_target():
@@ -403,6 +424,63 @@ class MainWindow(QMainWindow):
             return "已补充太阳细节"
 
         return ", ".join(item.op_type.name for item in operations)
+
+    def _should_use_model_canvas(self, text: str) -> bool:
+        """判断是否应把语音交给模型更新整幅画布。"""
+        stripped = text.strip()
+        if not stripped:
+            return False
+
+        if any(word in stripped for word in (
+            "清空", "撤销", "回到", "返回", "退回",
+            "开始监听", "停止监听", "停止识别", "暂停",
+        )):
+            return False
+        if any(word in stripped for word in ("画的是", "这是", "这个是", "叫做", "叫")):
+            return False
+        if any(word in stripped for word in ("放大画布", "缩小画布", "移动画布", "平移画布")):
+            return False
+
+        geometric_words = ("圆", "圆圈", "矩形", "正方形", "方形", "三角形", "五角星", "星形", "直线")
+        scene_words = (
+            "树", "苹果", "河", "小溪", "溪流", "鱼", "太阳", "云", "山", "草",
+            "花", "房子", "小屋", "桥", "路", "天空", "鸟", "人物", "动物",
+            "森林", "风景", "背景", "水面", "湖", "船",
+        )
+        action_words = (
+            "画", "生成", "添加", "加", "补", "长", "放", "有", "涂", "上色",
+            "改成", "变成", "填充", "丰富", "完善",
+        )
+        relation_words = ("在", "上", "下", "旁边", "里面", "左边", "右边", "下面", "上面")
+
+        if any(word in stripped for word in scene_words):
+            return any(word in stripped for word in action_words + relation_words)
+
+        if any(word in stripped for word in geometric_words):
+            return False
+
+        return self.engine.is_i2i_mode() and any(word in stripped for word in action_words)
+
+    def _is_i2i_extension(self, text: str, canvas_ops) -> bool:
+        """判断是否是扩展画面的命令（而非独立的新元素）。
+
+        扩展命令的特征：
+        - 包含参照物：在...上/下/旁边
+        - 包含追加动词：加、补、再、也
+        - 包含方向/位置：上、下、左边、右边、里面
+        - 不包含"生成/来一张"等独立生成动词
+        """
+        # 排除独立生成命令
+        if re.search(r"(生成|来一|来张|来幅|画一幅|画一张|画一张)", text):
+            return False
+
+        # 包含参照物或追加动词 → I2I
+        extension_keywords = [
+            "在", "加", "补", "再", "也", "然后",
+            "上", "下", "旁边", "里面", "边",
+            "旁边", "下面", "上面", "左边", "右边",
+        ]
+        return any(kw in text for kw in extension_keywords)
 
     def _is_immediate_system_command(self, operations) -> bool:
         return bool(operations) and all(

@@ -289,19 +289,33 @@ class CanvasWidget(QWidget):
         if not op.image_bytes:
             return
         pixmap = QPixmap()
-        if pixmap.loadFromData(op.image_bytes):
-            # 裁剪白边
-            cropped = self._crop_white_edges(pixmap)
-            cropped = self._tint_line_art(cropped, op.color)
-            x, y = op.position
-            max_size = 400
-            scaled = cropped.scaled(max_size, max_size,
-                                    Qt.AspectRatioMode.KeepAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation)
-            # 居中放置：让裁剪后的图片中心对准目标位置
-            offset_x = x - (scaled.width() - max_size) // 2
-            offset_y = y - (scaled.height() - max_size) // 2
-            painter.drawPixmap(offset_x, offset_y, scaled)
+        if not pixmap.loadFromData(op.image_bytes):
+            return
+
+        # 整幅画模式：图片就是当前画布状态，不作为小贴图裁剪。
+        if getattr(op, "full_canvas", False):
+            scaled = pixmap.scaled(
+                self._base_width, self._base_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = int((self._base_width - scaled.width()) / 2)
+            y = int((self._base_height - scaled.height()) / 2)
+            painter.drawPixmap(x, y, scaled)
+            return
+
+        # 传统模式：裁剪白边后作为小元素放置
+        cropped = self._crop_white_edges(pixmap)
+        cropped = self._tint_line_art(cropped, op.color)
+        x, y = op.position
+        max_size = 400
+        scaled = cropped.scaled(max_size, max_size,
+                                Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
+        # 居中放置：让裁剪后的图片中心对准目标位置
+        offset_x = x - (scaled.width() - max_size) // 2
+        offset_y = y - (scaled.height() - max_size) // 2
+        painter.drawPixmap(offset_x, offset_y, scaled)
 
     def _crop_white_edges(self, pixmap: QPixmap) -> QPixmap:
         """裁剪图片四周的纯色背景边缘，保留内容轮廓。

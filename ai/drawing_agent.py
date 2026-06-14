@@ -53,6 +53,8 @@ class DrawingAgent:
     ) -> List[DrawingOperation]:
         """根据画布状态和用户请求规划操作。
 
+        整幅画布 I2I 模式由 MainWindow 和 DrawingEngine 优先处理。
+
         Args:
             text: 用户语音文本。
             engine: 绘图引擎（提供画布状态）。
@@ -89,6 +91,29 @@ class DrawingAgent:
             return self._plan_edit(normalized, canvas_ops, engine)
 
         return []
+
+    def build_i2i_delta(self, text: str, canvas_ops: List[DrawingOperation]) -> str:
+        """为 I2I 模式构建增量提示词。
+
+        从用户语音中提取要添加/修改的内容，转换为英文提示词。
+        例如 “在大树上画一些苹果” → “add apples on the tree”
+
+        Args:
+            text: 用户语音文本。
+            canvas_ops: 当前画布上的操作。
+
+        Returns:
+            英文增量提示词。
+        """
+        # 提取核心对象
+        prompt = self._extract_ai_prompt(text)
+        if not prompt:
+            prompt = text
+
+        # 翻译为英文（简化版：直接返回中文，模型能理解）
+        # 更好的做法是用 LLM 翻译，但这里先返回中文
+        # 因为 Agnes 的 _clean_prompt_for_model 已经做了英文处理
+        return prompt
 
     # ── 简单操作 ──────────────────────────────────────────
 
