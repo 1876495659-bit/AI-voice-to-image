@@ -231,20 +231,27 @@ class VoiceService(QObject):
                     logger.error("回退模型加载失败: %s", e)
                     return text, confidence
 
-            result2 = self._fallback_model.transcribe(
-                audio,
-                language="zh",
-                fp16=False,
-                temperature=0.0,
-                condition_on_previous_text=False,
-                initial_prompt=prompt,
-            )
-            text2 = self._clean_transcription(result2.get("text", ""))
-            if self._is_unstable_transcription(text2, result2):
-                raise _UnstableTranscriptionError()
-            conf2 = self._estimate_confidence(result2, text2)
-            if conf2 > confidence and text2:
-                return text2, conf2
+            try:
+                result2 = self._fallback_model.transcribe(
+                    audio,
+                    language="zh",
+                    fp16=False,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt=prompt,
+                )
+                text2 = self._clean_transcription(result2.get("text", ""))
+                if self._is_unstable_transcription(text2, result2):
+                    # fallback 也产生不稳定结果，回退到 tiny 的结果
+                    logger.info("回退模型结果不稳定，使用主模型结果: \"%s\"", text)
+                    return text, confidence
+
+                conf2 = self._estimate_confidence(result2, text2)
+                if conf2 > confidence and text2:
+                    return text2, conf2
+            except _UnstableTranscriptionError:
+                # 异常路径也回退到 tiny
+                logger.info("回退模型异常，使用主模型结果: \"%s\"", text)
 
         return text, confidence
 
