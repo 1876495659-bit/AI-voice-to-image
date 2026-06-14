@@ -264,7 +264,8 @@ class VoiceService(QObject):
 
         for seg in result.get("segments", []):
             ratio = seg.get("compression_ratio")
-            if ratio is not None and ratio >= 3.0:
+            # 缩短文本（<=15字）放宽阈值，避免误杀简短有效语音
+            if ratio is not None and ratio >= 3.0 and len(text) > 15:
                 return True
 
         return self._has_repeating_phrase(text)
