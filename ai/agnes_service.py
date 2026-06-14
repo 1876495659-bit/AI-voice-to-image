@@ -48,6 +48,13 @@ class AgnesImageService(AIService):
         "棕": "brown", "灰": "gray", "粉": "pink",
     }
 
+    # 语音常见错字纠正 — Whisper 听错的字
+    _VOICE_TYPOS: dict[str, str] = {
+        "一颗": "一棵",  # 树/草用"棵"
+        "一科": "一棵",
+        "一颗": "一棵",
+    }
+
     # 简笔画风格引导 — 所有默认生成统一为此风格
     _LINE_ART = (
         "simple single-color line drawing, clean white background, "
@@ -91,14 +98,18 @@ class AgnesImageService(AIService):
         所有默认生成统一为单色线条画，黑色墨水。
         如果用户指定了颜色则用指定颜色；如果用户要求写实则不加引导。
         """
+        # 常见语音错字纠正
+        for wrong, correct in self._VOICE_TYPOS.items():
+            prompt = prompt.replace(wrong, correct)
+
         if any(w in prompt for w in self._REALISTIC_WORDS):
             return prompt
 
         # 检查是否指定了颜色
         color_en, cleaned_prompt = self._extract_color_from_prompt(prompt)
 
-        # 清理量词前缀
-        for prefix in ("一只", "一个", "一幅"):
+        # 清理量词前缀（覆盖各种量词和错字）
+        for prefix in ("一只", "一个", "一幅", "一棵", "一颗", "一张", "一头", "一条", "一幅"):
             if cleaned_prompt.startswith(prefix):
                 cleaned_prompt = cleaned_prompt[len(prefix):]
                 break

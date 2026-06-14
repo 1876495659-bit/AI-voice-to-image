@@ -425,10 +425,10 @@ class CommandParser:
         # 检查是否有"附近"/"旁边"
         is_nearby = any(w in text for w in ("附近", "旁边"))
 
-        # 检查数量+对象（批量生成）
+        # 检查数量+对象（批量生成）— 只有数量 > 1 才批量
         qty_animal = self._extract_quantity_and_animal(text)
 
-        if qty_animal:
+        if qty_animal and qty_animal[0] > 1:
             qty, animal = qty_animal
             if is_nearby:
                 anchor = position if position else (self.canvas_width // 2, self.canvas_height // 2)
