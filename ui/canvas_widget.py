@@ -232,8 +232,8 @@ class CanvasWidget(QWidget):
 
     def _draw_circle(self, painter: QPainter, op: CircleOperation) -> None:
         cx, cy = op.center
-        painter.drawEllipse(cx - int(op.radius), cy - int(op.radius),
-                            int(op.radius * 2), int(op.radius * 2))
+        r = int(op.radius)
+        painter.drawEllipse(int(cx) - r, int(cy) - r, r * 2, r * 2)
 
     def _draw_triangle(self, painter: QPainter, op: TriangleOperation) -> None:
         polygon = QPolygon([QPoint(*op.p1), QPoint(*op.p2), QPoint(*op.p3)])
