@@ -40,9 +40,14 @@ class AgnesImageService(AIService):
         self._api_base = api_base or config.AGNES_API_BASE
         self._cache: dict[str, bytes] = {}
 
-    SKETCH_PREFIX = (
-        "a simple black line drawing of "
+    # 默认风格：卡通简笔画。如果用户明确说要写实则覆盖。
+    _DEFAULT_SKETCH_PREFIX = (
+        "simple cartoon doodle, children's coloring book illustration, "
+        "bold outlines, flat fill colors, cute character design, "
+        "white background, no shading, no realistic texture, "
+        "no photograph, no detailed illustration, "
     )
+    _REALISTIC_PREFIX = ""
 
     _SKETCH_WORDS = frozenset((
         "sketch", "drawing", "pencil", "hand-drawn", "charcoal",
@@ -50,12 +55,32 @@ class AgnesImageService(AIService):
         "简笔画", "素描", "手绘", "素描画", "线条画",
         "蜡笔", "单色", "线稿", "涂鸦",
     ))
+    _REALISTIC_WORDS = frozenset((
+        "写实", "真实", "照片", "photorealistic", "realistic",
+        "photo", "写实风格", "逼真", "高质量", "精致",
+    ))
 
-    def _enhance_for_sketch_style(self, prompt: str) -> str:
-        """确保提示词导向手绘素描风格。"""
-        if any(w in prompt.lower() for w in self._SKETCH_WORDS):
+    def _enhance_for_sketch_style(self, prompt: str, has_color: bool = False) -> str:
+        """确保提示词导向手绘风格。
+
+        如果用户要求写实（包含"写实"/"真实"/"照片"等词）则不加风格引导，
+        让模型自由生成。否则强制卡通简笔画风格。
+        如果提示词中包含颜色名，保留颜色信息。
+        """
+        if any(w in prompt for w in self._REALISTIC_WORDS):
+            # 用户明确要求写实，不加引导
             return prompt
-        return f"{self.SKETCH_PREFIX}{prompt}"
+        if any(w in prompt.lower() for w in self._SKETCH_WORDS):
+            # 提示词已含手绘词，仅追加卡通引导
+            return f"{self._DEFAULT_SKETCH_PREFIX}{prompt}"
+        # 默认：卡通简笔画
+        prefix = self._DEFAULT_SKETCH_PREFIX
+        # 如果 prompt 以"一只"/"一个"/"一只"开头，清理掉冗余量词
+        if prompt.startswith("一只"):
+            prompt = prompt[2:]
+        elif prompt.startswith("一个"):
+            prompt = prompt[2:]
+        return f"{prefix}{prompt}"
 
     def generate_image(self, prompt: str) -> Optional[bytes]:
         """使用 Agnes Image 2.1 Flash 生成图像。

@@ -268,35 +268,76 @@ class CanvasWidget(QWidget):
             painter.drawPixmap(x, y, scaled)
 
     def _crop_white_edges(self, pixmap: QPixmap) -> QPixmap:
-        """裁剪图片四周的白色/接近白色边缘，保留内容轮廓。"""
+        """裁剪图片四周的纯色背景边缘，保留内容轮廓。
+
+        采用边缘扫描法：从四个方向逐行/列扫描，找到第一行/列中包含
+        非背景色的像素的位置，以此为边界裁剪。
+        """
         img = pixmap.toImage()
         if img.isNull():
             return pixmap
 
-        # 找到非白色区域的边界（亮度低于 0.97 即视为非白）
-        left, right, top, bottom = img.width(), 0, img.height(), 0
-        found_any = False
-        for x in range(img.width()):
-            for y in range(img.height()):
-                pixel = img.pixelColor(x, y)
-                # 不是纯白或接近纯白
-                if pixel.lightnessF() < 0.97:
-                    left = min(left, x)
-                    right = max(right, x)
-                    top = min(top, y)
-                    bottom = max(bottom, y)
-                    found_any = True
+        w, h = img.width(), img.height()
 
-        if not found_any:
-            # 全白图片，返回原图
+        # 采样步长（避免逐像素扫描太慢）
+        step = max(1, min(w, h) // 256)
+
+        # 1. 从边缘采样确定背景色（取四个角的中值）
+        corners = [
+            img.pixelColor(0, 0),
+            img.pixelColor(w - 1, 0),
+            img.pixelColor(0, h - 1),
+            img.pixelColor(w - 1, h - 1),
+        ]
+        bg_color = sorted(corners, key=lambda c: c.lightness())[len(corners) // 2]
+
+        def _is_same_color(c1: QColor, c2: QColor, tol: float = 0.08) -> bool:
+            """判断两个颜色是否相同（允许少量色差）。"""
+            return abs(c1.lightnessF() - c2.lightnessF()) < tol
+
+        def _has_content(line: list) -> bool:
+            """判断一行/列中是否包含非背景色像素。"""
+            return any(not _is_same_color(p, bg_color) for p in line)
+
+        # 2. 从上往下找第一行有内容的
+        top = 0
+        while top < h:
+            row = [img.pixelColor(x, top) for x in range(0, w, step)]
+            if _has_content(row):
+                break
+            top += step
+
+        # 3. 从下往上
+        bottom = h - 1
+        while bottom >= 0:
+            row = [img.pixelColor(x, bottom) for x in range(0, w, step)]
+            if _has_content(row):
+                break
+            bottom -= step
+
+        # 4. 从左往右
+        left = 0
+        while left < w:
+            col = [img.pixelColor(left, y) for y in range(0, h, step)]
+            if _has_content(col):
+                break
+            left += step
+
+        # 5. 从右往左
+        right = w - 1
+        while right >= 0:
+            col = [img.pixelColor(right, y) for y in range(0, h, step)]
+            if _has_content(col):
+                break
+            right -= step
+
+        # 6. 回退：如果没找到任何内容，返回原图
+        if top > bottom or left > right:
             return pixmap
 
-        # 裁剪
+        # 7. 裁剪并贴到透明背景
         cropped = pixmap.copy(left, top, right - left + 1, bottom - top + 1)
-
-        # 将裁剪结果绘制到透明背景上
-        size = cropped.size()
-        result = QPixmap(size)
+        result = QPixmap(cropped.size())
         result.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(result)
