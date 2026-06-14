@@ -551,8 +551,9 @@ class CommandParser:
         """生成以已有图形为参照的绘制操作。
 
         解析 "在圆的正上方画个三角形" → AnchorShapeOperation
+        解析 "在兔子下面画一条直线" → AnchorShapeOperation(ref_shape="ai_image")
         """
-        ref_shape, ref_color = self._extract_target_spec(text)
+        ref_shape, ref_color = self._extract_target_spec(text, consider_anchor=True)
         direction = self._extract_anchor_direction(text)
         shape = slots.get("shape")  # 要画的形状
 
@@ -584,12 +585,11 @@ class CommandParser:
             return "above"
         if re.search(r"[三角圆星矩线形圈](下)", text):
             return "below"
-        # "的下面"/"的上面"（带"的"的上下）
-        if "上面" in text and "的" in text:
-            return "above"
-        if "下面" in text and "的" in text:
+        # 通用方向词（支持"兔子下面"/"乌龟的上面"等，不强制"的"）
+        if "下面" in text:
             return "below"
-        # "的左边"/"的右边" 或 "三角形左边"/"三角形右边"（省略"的"）
+        if "上面" in text:
+            return "above"
         if "左边" in text:
             return "left"
         if "右边" in text:
@@ -668,12 +668,16 @@ class CommandParser:
             return None
         return MoveSelectedOperation(dx=dx, dy=dy)
 
-    def _extract_target_spec(self, text: str) -> tuple[str, str]:
+    def _extract_target_spec(self, text: str, consider_anchor: bool = False) -> tuple[str, str]:
         """从文本提取目标图形的形状类型和颜色。
 
         例如 "蓝色圆圈要在直线的左上方" → ("circle", "蓝")
         例如 "圆圈要在直线的左上方" → ("circle", "")
-        例如 "在乌龟脚下面" → ("ai_image", "")
+        例如 "在兔子下面画一条直线" → ("ai_image", "")（参照物是兔子）
+
+        Args:
+            text: 语音文本。
+            consider_anchor: 在锚点定位场景下，优先匹配动物/对象名作为参照物。
 
         Returns:
             (shape_key, color_name) 或 ("", "") 如果无法识别
@@ -687,26 +691,50 @@ class CommandParser:
         if color_m:
             color = color_m
 
-        # 匹配形状名——使用宽松模式（不需要"画"字），取最早出现的匹配
-        loose_shapes: dict[str, Pattern[str]] = {
-            "circle": re.compile(r"(圆|圆形|圈圈|圆圈)", re.IGNORECASE),
-            "rectangle": re.compile(r"(矩形|方形|正方|长方形|方框)", re.IGNORECASE),
-            "triangle": re.compile(r"(三角|三角形)", re.IGNORECASE),
-            "star": re.compile(r"(星|星星|五角星)", re.IGNORECASE),
-            "line_draw": re.compile(r"(直线|线条)", re.IGNORECASE),
-            "freehand": re.compile(r"(手绘|随便画)", re.IGNORECASE),
-        }
-        for shape_key, pattern in loose_shapes.items():
-            m = pattern.search(text)
-            if m and m.start() < first_pos:
-                first_pos = m.start()
-                shape = shape_key
-
-        # 如果没匹配到几何形状，尝试匹配 AI 图像（通过动物/对象关键词）
-        if not shape:
-            ai_keyword = self._extract_ai_anchor_keyword(text)
+        if consider_anchor:
+            # 锚点场景：在"画"字之前优先匹配 AI 图像关键词作为参照物
+            # 比如 "在兔子下面画一条直线" → 参照物=兔子 (ai_image)
+            draw_idx = text.find("画")
+            prefix = text[:draw_idx] if draw_idx >= 0 else text
+            ai_keyword = self._extract_ai_anchor_keyword(prefix)
             if ai_keyword:
                 return ("ai_image", color)
+            # AI 关键词没匹配到，回退到几何形状匹配
+            # 比如 "在圆的正上方画个三角形" → 参照物=圆 (circle)
+            loose_shapes: dict[str, Pattern[str]] = {
+                "circle": re.compile(r"(圆|圆形|圈圈|圆圈)", re.IGNORECASE),
+                "rectangle": re.compile(r"(矩形|方形|正方|长方形|方框)", re.IGNORECASE),
+                "triangle": re.compile(r"(三角|三角形)", re.IGNORECASE),
+                "star": re.compile(r"(星|星星|五角星)", re.IGNORECASE),
+                "line_draw": re.compile(r"(直线|线条)", re.IGNORECASE),
+                "freehand": re.compile(r"(手绘|随便画)", re.IGNORECASE),
+            }
+            for shape_key, pattern in loose_shapes.items():
+                m = pattern.search(prefix)
+                if m and m.start() < first_pos:
+                    first_pos = m.start()
+                    shape = shape_key
+        else:
+            # 常规场景：匹配形状名——使用宽松模式（不需要"画"字），取最早出现的匹配
+            loose_shapes: dict[str, Pattern[str]] = {
+                "circle": re.compile(r"(圆|圆形|圈圈|圆圈)", re.IGNORECASE),
+                "rectangle": re.compile(r"(矩形|方形|正方|长方形|方框)", re.IGNORECASE),
+                "triangle": re.compile(r"(三角|三角形)", re.IGNORECASE),
+                "star": re.compile(r"(星|星星|五角星)", re.IGNORECASE),
+                "line_draw": re.compile(r"(直线|线条)", re.IGNORECASE),
+                "freehand": re.compile(r"(手绘|随便画)", re.IGNORECASE),
+            }
+            for shape_key, pattern in loose_shapes.items():
+                m = pattern.search(text)
+                if m and m.start() < first_pos:
+                    first_pos = m.start()
+                    shape = shape_key
+
+            # 如果没匹配到几何形状，尝试匹配 AI 图像（通过动物/对象关键词）
+            if not shape:
+                ai_keyword = self._extract_ai_anchor_keyword(text)
+                if ai_keyword:
+                    return ("ai_image", color)
 
         return (shape, color)
 
