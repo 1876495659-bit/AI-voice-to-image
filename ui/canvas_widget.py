@@ -156,6 +156,30 @@ class CanvasWidget(QWidget):
         self._background_color = color
         self.update()
 
+    def render_snapshot(
+        self,
+        operations: Optional[List[DrawingOperation]] = None,
+        max_width: int = 180,
+        max_height: int = 120,
+    ) -> QPixmap:
+        """离屏渲染当前整幅画，用于右侧步骤快照。"""
+        pixmap = QPixmap(self._base_width, self._base_height)
+        pixmap.fill(QColor(self._background_color))
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._draw_background(painter)
+        for op in operations if operations is not None else self._operations:
+            self._draw_operation(painter, op)
+        painter.end()
+
+        return pixmap.scaled(
+            max_width,
+            max_height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
     def _draw_grid(self, painter: QPainter) -> None:
         """绘制浅灰网格背景。"""
         grid_color = QColor("#F0F0F0")
@@ -265,13 +289,17 @@ class CanvasWidget(QWidget):
             scaled = cropped.scaled(max_size, max_size,
                                     Qt.AspectRatioMode.KeepAspectRatio,
                                     Qt.TransformationMode.SmoothTransformation)
-            painter.drawPixmap(x, y, scaled)
+            # 居中放置：让裁剪后的图片中心对准目标位置
+            offset_x = x - (scaled.width() - max_size) // 2
+            offset_y = y - (scaled.height() - max_size) // 2
+            painter.drawPixmap(offset_x, offset_y, scaled)
 
     def _crop_white_edges(self, pixmap: QPixmap) -> QPixmap:
         """裁剪图片四周的纯色背景边缘，保留内容轮廓。
 
-        采用边缘扫描法：从四个方向逐行/列扫描，找到第一行/列中包含
-        非背景色的像素的位置，以此为边界裁剪。
+        采用四向扫描法：从上下左右四个方向逐像素扫描，找到第一行/列中包含
+        非背景色（非白色/近白色）像素的位置，以此为边界裁剪。
+        结果贴到透明背景上，实现不规则形状。
         """
         img = pixmap.toImage()
         if img.isNull():
@@ -279,10 +307,7 @@ class CanvasWidget(QWidget):
 
         w, h = img.width(), img.height()
 
-        # 采样步长（避免逐像素扫描太慢）
-        step = max(1, min(w, h) // 256)
-
-        # 1. 从边缘采样确定背景色（取四个角的中值）
+        # 1. 从四个角取背景色（取亮度最高且四角一致的作为背景）
         corners = [
             img.pixelColor(0, 0),
             img.pixelColor(w - 1, 0),
@@ -290,53 +315,72 @@ class CanvasWidget(QWidget):
             img.pixelColor(w - 1, h - 1),
         ]
         bg_color = sorted(corners, key=lambda c: c.lightness())[len(corners) // 2]
+        # 背景亮度阈值（接近白色的视为背景）
+        bg_threshold = 0.92
 
-        def _is_same_color(c1: QColor, c2: QColor, tol: float = 0.08) -> bool:
-            """判断两个颜色是否相同（允许少量色差）。"""
-            return abs(c1.lightnessF() - c2.lightnessF()) < tol
-
-        def _has_content(line: list) -> bool:
-            """判断一行/列中是否包含非背景色像素。"""
-            return any(not _is_same_color(p, bg_color) for p in line)
-
-        # 2. 从上往下找第一行有内容的
+        # 2. 从上往下扫描
         top = 0
         while top < h:
-            row = [img.pixelColor(x, top) for x in range(0, w, step)]
-            if _has_content(row):
-                break
-            top += step
+            for x in range(0, w, 2):  # 每2像素采样一次加速
+                c = img.pixelColor(x, top)
+                if c.lightnessF() < bg_threshold:
+                    break
+            else:
+                top += 2
+                continue
+            break
 
-        # 3. 从下往上
+        # 3. 从下往上扫描
         bottom = h - 1
         while bottom >= 0:
-            row = [img.pixelColor(x, bottom) for x in range(0, w, step)]
-            if _has_content(row):
-                break
-            bottom -= step
+            for x in range(0, w, 2):
+                c = img.pixelColor(x, bottom)
+                if c.lightnessF() < bg_threshold:
+                    break
+            else:
+                bottom -= 2
+                continue
+            break
 
-        # 4. 从左往右
+        # 4. 从左往右扫描
         left = 0
         while left < w:
-            col = [img.pixelColor(left, y) for y in range(0, h, step)]
-            if _has_content(col):
-                break
-            left += step
+            for y in range(0, h, 2):
+                c = img.pixelColor(left, y)
+                if c.lightnessF() < bg_threshold:
+                    break
+            else:
+                left += 2
+                continue
+            break
 
-        # 5. 从右往左
+        # 5. 从右往左扫描
         right = w - 1
         while right >= 0:
-            col = [img.pixelColor(right, y) for y in range(0, h, step)]
-            if _has_content(col):
-                break
-            right -= step
+            for y in range(0, h, 2):
+                c = img.pixelColor(right, y)
+                if c.lightnessF() < bg_threshold:
+                    break
+            else:
+                right -= 2
+                continue
+            break
 
-        # 6. 回退：如果没找到任何内容，返回原图
+        # 回退：如果没找到任何内容，返回原图
         if top > bottom or left > right:
             return pixmap
 
-        # 7. 裁剪并贴到透明背景
+        # 加一点内边距（让轮廓更自然）
+        margin = 3
+        top = max(0, top - margin)
+        bottom = min(h - 1, bottom + margin)
+        left = max(0, left - margin)
+        right = min(w - 1, right + margin)
+
+        # 裁剪
         cropped = pixmap.copy(left, top, right - left + 1, bottom - top + 1)
+
+        # 贴到透明背景
         result = QPixmap(cropped.size())
         result.fill(Qt.GlobalColor.transparent)
 

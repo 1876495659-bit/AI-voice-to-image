@@ -9,9 +9,11 @@
 - 语音绘制形状（圆/矩形/三角形/星形/直线）
 - 语音编辑最近图形（移动/缩放/改色/选中）
 - 语音绘画助手：记住图形语义并逐步补充细节
+- 开放式 Agnes 绘画元素生成：根据用户语音生成任意元素，并以单一颜色画笔风格叠加到画布
+- 右侧作品步骤快照：每次语音完成后记录当前整幅画，便于回看创作过程
 - 语音调整笔刷粗细
 - 语音撤销/清空
-- 语音 AI 生成图片（DALL·E 3）
+- 语音 AI 生成图片（Agnes Image 2.1 Flash）
 - 实时语音识别反馈面板
 - 命令历史面板
 
@@ -22,7 +24,7 @@
 | 语言 | Python 3.10+ |
 | GUI | PyQt6 |
 | 语音识别 | OpenAI Whisper (base/small) |
-| AI 绘图 | OpenAI DALL·E 3 |
+| AI 绘图 | Agnes Image 2.1 Flash |
 | 麦克风 | sounddevice + numpy |
 
 ## 安装
@@ -45,13 +47,13 @@ pip install -r requirements.txt
 
 ```bash
 # Windows (PowerShell)
-$env:OPENAI_API_KEY = "sk-xxxx"
+$env:AGNES_API_KEY = "your-agnes-api-key"
 
 # Windows (CMD)
-set OPENAI_API_KEY=sk-xxxx
+set AGNES_API_KEY=your-agnes-api-key
 
 # Linux / macOS
-export OPENAI_API_KEY="sk-xxxx"
+export AGNES_API_KEY="your-agnes-api-key"
 ```
 
 ## 运行
@@ -75,8 +77,10 @@ python main.py
 | 删除最近图形 | 删除当前选中或最近图形 | "删除这个正方形"、"删掉它" |
 | 标注图形含义 | 让系统记住当前图形是什么 | "我刚刚画的是一个太阳" |
 | 补充绘画细节 | 根据当前语义对象追加画布细节 | "帮我补充一点它的细节"、"给太阳加点光芒" |
+| 开放式 AI 元素绘画 | 用 Agnes 生成任意用户要求的元素，并叠加到当前画面 | "画一棵树"、"在树下面画一条小河"、"在树上画几个苹果" |
+| 单色涂色 | 按语音把当前/目标元素改为指定颜色 | "用蓝色涂满小河"、"把它换成红色" |
 | 撤销/清空 | 操作 | "撤销"、"清空" |
-| 生成 | AI 画图 | "生成一幅日落海景" |
+| 生成 | AI 画图 | "生成一幅单色线稿风景" |
 | 开始/停止监听 | 控制麦克风 | "开始监听"、"停止监听" |
 
 ## 目录结构

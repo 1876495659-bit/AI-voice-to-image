@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ai.drawing_agent import DrawingAgent
 from engine.drawing_engine import DrawingEngine
-from engine.operations import CircleOperation, LineDrawOperation, RecolorSelectedOperation
+from engine.operations import AIImageOperation, CircleOperation, LineDrawOperation, RecolorSelectedOperation
 
 
 def test_agent_labels_recent_shape_as_sun() -> None:
@@ -58,8 +58,43 @@ def test_agent_adds_sun_details_around_labeled_circle() -> None:
     assert any(isinstance(op, LineDrawOperation) for op in engine.get_history())
 
 
+def test_agent_generates_open_vocabulary_ai_element() -> None:
+    """用户要求任意元素时，应交给 Agnes 生成单色画笔元素。"""
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    agent = DrawingAgent()
+
+    operations = agent.plan("画一座房子", engine)
+
+    assert len(operations) == 1
+    op = operations[0]
+    assert isinstance(op, AIImageOperation)
+    assert "房子" in op.prompt
+    assert op.semantic_label == "房子"
+    assert op.position == (200, 100)
+
+
+def test_agent_places_open_vocabulary_element_near_reference() -> None:
+    """新元素应能引用之前由模型生成的语义元素位置。"""
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    tree = AIImageOperation(prompt="树", position=(200, 80))
+    tree.semantic_label = "树"
+    engine.history.push(tree)
+
+    agent = DrawingAgent()
+    operations = agent.plan("在树的下面画一条小河", engine)
+
+    assert len(operations) == 1
+    op = operations[0]
+    assert isinstance(op, AIImageOperation)
+    assert "小河" in op.prompt
+    assert op.semantic_label == "小河"
+    assert op.position[1] > tree.position[1]
+
+
 if __name__ == "__main__":
     test_agent_labels_recent_shape_as_sun()
     test_agent_fills_current_circle_with_yellow()
     test_agent_adds_sun_details_around_labeled_circle()
+    test_agent_generates_open_vocabulary_ai_element()
+    test_agent_places_open_vocabulary_element_near_reference()
     print("test_drawing_agent: OK")

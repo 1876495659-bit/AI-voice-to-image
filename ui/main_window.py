@@ -126,6 +126,7 @@ class MainWindow(QMainWindow):
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
         self.drawing_agent = DrawingAgent()
+        self._picture_snapshots = []
 
         # 画布（白布）
         self.canvas = CanvasWidget(
@@ -216,6 +217,9 @@ class MainWindow(QMainWindow):
         self.engine.signals.canvas_cleared.connect(
             self.canvas.clear
         )
+        self.engine.signals.canvas_cleared.connect(
+            self._clear_picture_snapshots
+        )
         self.engine.signals.repaint.connect(
             self._on_repaint
         )
@@ -284,17 +288,22 @@ class MainWindow(QMainWindow):
             self.voice_panel.set_listening_active(True)
 
     def _execute_voice_text(self, text: str, confidence: float, manual: bool = False) -> None:
-        agent_ops = self.drawing_agent.plan(text, self.engine)
+        # 先同步画布操作列表到 parser（供智能参照物匹配使用）
+        self.parser.update_canvas_operations(self.engine.get_history())
+
+        # 同步画布操作列表到 agent（供智能位置规划使用）
+        canvas_ops = self.engine.get_history()
+
+        agent_ops = self.drawing_agent.plan(text, self.engine, canvas_ops)
         if agent_ops:
             if self._requires_edit_target(agent_ops) and not self.engine.has_edit_target():
                 self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
                 return
             self.engine.execute_multiple(agent_ops)
-            self.voice_panel.show_action(self._describe_operations(agent_ops))
+            self._record_picture_step(text)
+            prefix = "已执行: " if not manual else "手动执行: "
+            self.voice_panel.show_action(f"{prefix}{self._describe_operations(agent_ops)}")
             return
-
-        # 同步画布操作列表到 parser，供智能参照物匹配使用
-        self.parser.update_canvas_operations(self.engine.get_history())
 
         result = self.parser.parse(text, confidence)
         if result.is_success:
@@ -302,6 +311,7 @@ class MainWindow(QMainWindow):
                 self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
                 return
             self.engine.execute_multiple(result.operations)
+            self._record_picture_step(text)
             prefix = "已执行: " if not manual else "手动执行: "
             self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
         elif result.is_uncertain:
@@ -310,6 +320,7 @@ class MainWindow(QMainWindow):
                     self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
                     return
                 self.engine.execute_multiple(result.operations)
+                self._record_picture_step(text)
                 prefix = "手动执行: " if manual else "低置信已执行: "
                 self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
             else:
@@ -344,6 +355,9 @@ class MainWindow(QMainWindow):
             return "已删除最近图形"
         if isinstance(op, SelectLastOperation):
             return "已选中最近图形"
+        if isinstance(op, AIImageOperation):
+            label = getattr(op, "semantic_label", "") or getattr(op, "prompt", "")
+            return f"已添加{label}"
         if any(getattr(item, "semantic_label", "").startswith("太阳") for item in operations):
             return "已补充太阳细节"
 
@@ -367,8 +381,7 @@ class MainWindow(QMainWindow):
                 self.canvas._operations.append(op)
         self.canvas.set_selected_operation(self.engine.selected_operation_id)
         self.canvas.update()
-        # 更新时间线
-        self.timeline_panel.update_from_history(self.engine.get_history())
+        self._refresh_latest_picture_snapshot()
 
     def _on_timeline_click(self, item) -> None:
         """点击时间线某项，撤销到该步。"""
@@ -389,6 +402,33 @@ class MainWindow(QMainWindow):
             StarOperation,
             TriangleOperation,
         ))
+
+    def _record_picture_step(self, text: str) -> None:
+        """把当前整幅画作为一个创作步骤记录到右侧。"""
+        if not any(self._is_renderable_operation(op) for op in self.engine.get_history()):
+            return
+        label = f"第 {len(self._picture_snapshots) + 1} 步：{text}"
+        snapshot = self.canvas.render_snapshot(self._renderable_history())
+        self._picture_snapshots.append((label, snapshot))
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
+
+    def _refresh_latest_picture_snapshot(self) -> None:
+        """AI 图片异步生成后，用最新画面刷新最后一步缩略图。"""
+        if not self._picture_snapshots:
+            return
+        label, _ = self._picture_snapshots[-1]
+        self._picture_snapshots[-1] = (
+            label,
+            self.canvas.render_snapshot(self._renderable_history()),
+        )
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
+
+    def _clear_picture_snapshots(self) -> None:
+        self._picture_snapshots.clear()
+        self.timeline_panel.clear()
+
+    def _renderable_history(self):
+        return [op for op in self.engine.get_history() if self._is_renderable_operation(op)]
 
 
 if __name__ == "__main__":

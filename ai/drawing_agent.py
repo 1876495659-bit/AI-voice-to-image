@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import random
 import re
 from typing import List, Optional
 
@@ -27,6 +28,7 @@ from engine.operations import (
     MoveSelectedOperation,
     OperationType,
     PointLocation,
+    RecolorSelectedOperation,
     RectangleOperation,
     StarOperation,
     TriangleOperation,
@@ -62,14 +64,19 @@ class DrawingAgent:
         if not normalized:
             return []
 
-        # 跳过 AI 生图命令 — 这些由 parser 处理
-        if self._is_ai_image_command(normalized):
-            return []
-
         # 1. 先检查是否有语义标签/颜色/大小等简单操作
         simple_ops = self._plan_simple(normalized, canvas_ops)
         if simple_ops:
             return simple_ops
+
+        if self._is_detail_command(normalized):
+            detail_ops = self._plan_detail(normalized, engine)
+            if detail_ops:
+                return detail_ops
+
+        # 几何形状与工具组合继续交给 CommandParser，避免抢走“用红笔画圆”。
+        if self._is_draw_shape(normalized):
+            return []
 
         # 2. 检查是否需要追加元素到画布
         if self._is_add_element_command(normalized, canvas_ops):
@@ -111,6 +118,44 @@ class DrawingAgent:
             if name in text:
                 return [ColorOperation(color=color_map.get_color(name))]
         return None
+
+    def _is_detail_command(self, text: str) -> bool:
+        """判断是否是“帮它补充细节/完善一下”这类上下文命令。"""
+        return any(word in text for word in ("补充", "细节", "完善", "丰富", "加点", "加些"))
+
+    def _plan_detail(self, text: str, engine: DrawingEngine) -> List[DrawingOperation]:
+        """给当前语义对象补充第一版可控细节。"""
+        target = engine.find_semantic_target("太阳") if "太阳" in text else engine.find_semantic_target()
+        if target is None:
+            return []
+        if getattr(target, "semantic_label", "") == "太阳":
+            return self._plan_sun_details(target)
+        return []
+
+    def _plan_sun_details(self, target: DrawingOperation) -> List[DrawingOperation]:
+        """给太阳补充单色画笔光芒。"""
+        bbox = self._get_bounding_box(target)
+        if not bbox:
+            return []
+        cx, cy = int(bbox["cx"]), int(bbox["cy"])
+        radius = int(max(bbox["right"] - bbox["left"], bbox["bottom"] - bbox["top"]) / 2)
+        color = getattr(target, "color", "#000000")
+        size = max(2, int(getattr(target, "size", 3)))
+        ops: List[DrawingOperation] = []
+        for i in range(12):
+            angle = math.tau * i / 12
+            start = (
+                int(cx + math.cos(angle) * (radius + 10)),
+                int(cy + math.sin(angle) * (radius + 10)),
+            )
+            end = (
+                int(cx + math.cos(angle) * (radius + 48)),
+                int(cy + math.sin(angle) * (radius + 48)),
+            )
+            ray = LineDrawOperation(color=color, size=size, start=start, end=end)
+            ray.semantic_label = "太阳光芒"
+            ops.append(ray)
+        return ops
 
     # ── 追加元素 ──────────────────────────────────────────
 
@@ -179,8 +224,9 @@ class DrawingAgent:
         """规划追加元素操作。
 
         核心：从文本中提取要画的元素类型，然后：
-        1. 如果没有参照物，默认放到画布右侧或底部
-        2. 如果有参照物，计算相对位置
+        1. 分析画布整体构图（元素分布、空白区域）
+        2. 根据参照物和方向词计算位置
+        3. 确保新元素自然地融入画面
         """
         # 分析画布上的元素
         canvas_elements = self._analyze_canvas(ops)
@@ -192,11 +238,7 @@ class DrawingAgent:
         if self._is_draw_line(text):
             return self._plan_draw_line(text, canvas_elements, ops, engine)
 
-        if self._is_draw_ai_image(text):
-            return self._plan_draw_ai_image(text, canvas_elements, engine)
-
-        # 默认：追加一条线
-        return self._plan_draw_line(text, canvas_elements, ops, engine)
+        return self._plan_draw_ai_image(text, canvas_elements, engine)
 
     def _is_draw_shape(self, text: str) -> bool:
         return any(kw in text for kw in [
@@ -205,13 +247,11 @@ class DrawingAgent:
 
     def _is_draw_line(self, text: str) -> bool:
         return any(kw in text for kw in [
-            "线", "河", "小河", "河流", "路", "马路", "公路",
-            "铁轨", "桥梁", "桥", "栏杆", "栅栏", "篱笆",
+            "直线", "横线", "竖线", "曲线", "线条", "波浪线",
         ])
 
     def _is_draw_ai_image(self, text: str) -> bool:
-        # AI 生图命令由 parser 处理，agent 不处理
-        return False
+        return self._is_add_element_command(text, [])
 
     def _plan_draw_ai_image(
         self,
@@ -225,10 +265,13 @@ class DrawingAgent:
         if not prompt:
             prompt = text
 
-        # 计算位置：有参照物就放参照物旁边，否则放画布右侧
-        pos = self._compute_element_position(text, canvas_elements, engine)
-
-        return [AIImageOperation(prompt=prompt, position=pos)]
+        # 计算位置：有参照物就放参照物旁边，否则放画布中心。
+        center = self._compute_element_position(text, canvas_elements, engine)
+        pos = self._center_to_image_position(center, engine)
+        op = AIImageOperation(prompt=self._build_element_prompt(prompt), position=pos)
+        op.semantic_label = self._extract_semantic_label(prompt)
+        op.color = self._extract_color_from_text(text)
+        return [op]
 
     def _plan_draw_line(
         self,
@@ -241,38 +284,142 @@ class DrawingAgent:
         color = self._extract_color_from_text(text)
         size = self._extract_size(text)
 
-        # 判断线条类型
-        is_horizontal = any(kw in text for kw in ["横线", "水平", "横向"])
-        is_vertical = any(kw in text for kw in ["竖线", "垂直", "纵向"])
-        is_curve = any(kw in text for kw in ["曲线", "波浪", "弯", "小河", "河流"])
-
-        # 计算位置
-        pos = self._compute_element_position(text, canvas_elements, engine)
-
-        cx, cy = pos
         cw, ch = engine.canvas_width, engine.canvas_height
 
-        if is_curve or "河" in text:
-            # 曲线（河流）：从左到右的波浪线
+        # 判断是否是大型场景元素（横跨整个画布）
+        is_large_scene = any(kw in text for kw in [
+            "河", "河流", "小河", "小溪",
+            "天空", "天", "草地", "草坪", "草原",
+            "地面", "土地", "田野", "山坡", "山顶",
+            "水面", "海", "湖", "海洋", "池塘",
+        ])
+
+        if is_large_scene:
+            # 大型场景元素：横跨整个画布
+            return self._plan_large_scene_element(text, color, size, cw, ch, canvas_elements)
+
+        # 普通线条
+        is_horizontal = any(kw in text for kw in ["横线", "水平", "横向"])
+        is_vertical = any(kw in text for kw in ["竖线", "垂直", "纵向"])
+        is_curve = any(kw in text for kw in ["曲线", "波浪", "弯"])
+
+        pos = self._compute_element_position(text, canvas_elements, engine)
+        cx, cy = pos
+
+        if is_curve:
             return self._plan_wavy_line(cx, cy, color, size, cw, ch, canvas_elements)
 
         elif is_horizontal:
-            # 水平线
             start = (20, cy)
             end = (cw - 20, cy)
             return [LineDrawOperation(color=color, size=size, start=start, end=end)]
 
         elif is_vertical:
-            # 垂直线
             start = (cx, 20)
             end = (cx, ch - 20)
             return [LineDrawOperation(color=color, size=size, start=start, end=end)]
 
         else:
-            # 默认：长横线
             start = (20, cy)
             end = (cw - 20, cy)
             return [LineDrawOperation(color=color, size=size, start=start, end=end)]
+
+    def _plan_large_scene_element(
+        self, text: str, color: str, size: int,
+        cw: int, ch: int, elements: List[dict],
+    ) -> List[DrawingOperation]:
+        """大型场景元素：横跨整个画布，位置由画面内容决定。"""
+        ops: List[DrawingOperation] = []
+
+        # 判断元素类型
+        if "河" in text or "溪" in text or "水" in text:
+            # 河流：在画面下部从左到右的波浪线
+            # 找所有非大型元素的最低点，放在其下方
+            min_bottom = ch * 0.5
+            for elem in elements:
+                bb = elem.get("bbox", {})
+                if bb.get("bottom", 0) > min_bottom:
+                    min_bottom = bb["bottom"]
+            river_y = min_bottom + 40
+            river_y = min(river_y, ch - 80)  # 不超过底部
+
+            # 创建波浪线（横跨整个画布）
+            points = []
+            segments = 40
+            for i in range(segments + 1):
+                x = int(40 + i * (cw - 80) / segments)
+                wave_amp = 12 + 8 * math.sin(i * 0.6)
+                y = int(river_y + math.sin(i * 0.7) * wave_amp)
+                points.append((x, y))
+
+            for i in range(len(points) - 1):
+                op = LineDrawOperation(color=color, size=size,
+                                       start=points[i], end=points[i + 1])
+                op.semantic_label = "河流"
+                ops.append(op)
+
+            # 河流通常有宽度（两条平行波浪线）
+            for offset in [-8, 8]:
+                points2 = []
+                for i in range(segments + 1):
+                    x = int(40 + i * (cw - 80) / segments)
+                    wave_amp = 12 + 8 * math.sin(i * 0.6)
+                    y = int(river_y + offset + math.sin(i * 0.7) * wave_amp)
+                    points2.append((x, y))
+                for i in range(len(points2) - 1):
+                    op = LineDrawOperation(color=color, size=size,
+                                           start=points2[i], end=points2[i + 1])
+                    ops.append(op)
+
+        elif "草" in text or "草坪" in text or "草原" in text:
+            # 草地：在画面下部绘制多条短横线表示草丛
+            grass_y = ch - 120
+            # 找参照物的底部
+            for elem in elements:
+                bb = elem.get("bbox", {})
+                if bb.get("bottom", 0) > grass_y - 50:
+                    grass_y = bb["bottom"] + 20
+            for row in range(3):
+                y = grass_y + row * 15
+                for x in range(40, cw - 40, 30):
+                    end_x = x + 20 + random.randint(-5, 5)
+                    ops.append(LineDrawOperation(color=color, size=size,
+                                                 start=(x, y), end=(end_x, y)))
+
+        elif "天空" in text or "天" in text:
+            # 天空：在画面上部绘制水平线表示天际线
+            sky_y = 80
+            ops.append(LineDrawOperation(color=color, size=size,
+                                         start=(20, sky_y), end=(cw - 20, sky_y)))
+
+        elif "地面" in text or "土地" in text:
+            # 地面：画面底部横线
+            ground_y = ch - 80
+            ops.append(LineDrawOperation(color=color, size=size,
+                                         start=(20, ground_y), end=(cw - 20, ground_y)))
+
+        elif "海" in text or "湖" in text:
+            # 水面：多条水平波浪线
+            water_y = ch - 150
+            for row in range(3):
+                points = []
+                segments = 30
+                for i in range(segments + 1):
+                    x = int(40 + i * (cw - 80) / segments)
+                    y = int(water_y + row * 20 + math.sin(i * 0.5) * 5)
+                    points.append((x, y))
+                for i in range(len(points) - 1):
+                    op = LineDrawOperation(color=color, size=size,
+                                           start=points[i], end=points[i + 1])
+                    ops.append(op)
+
+        else:
+            # 默认：横跨画布的横线
+            y = ch // 2
+            ops.append(LineDrawOperation(color=color, size=size,
+                                         start=(20, y), end=(cw - 20, y)))
+
+        return ops
 
     def _plan_draw_shape(
         self,
@@ -364,6 +511,7 @@ class DrawingAgent:
                 "type": self._operation_type_name(op),
                 "bbox": bbox,
                 "color": getattr(op, "color", ""),
+                "semantic_label": getattr(op, "semantic_label", ""),
             }
 
             if isinstance(op, AIImageOperation):
@@ -552,11 +700,15 @@ class DrawingAgent:
         for elem in reversed(elements):  # 从最近到最早
             etype = elem["type"]
             prompt = elem.get("prompt", "")
+            semantic_label = elem.get("semantic_label", "")
+
+            if semantic_label and semantic_label in text:
+                return elem
 
             # 检查元素类型是否匹配文本
-            for cn, type_key in type_keywords.items():
+            for type_key, keywords in type_keywords.items():
                 if etype == type_key:
-                    for keyword in type_keywords[cn]:
+                    for keyword in keywords:
                         if keyword in text:
                             return elem
 
@@ -565,8 +717,8 @@ class DrawingAgent:
                 chinese = re.findall(r'[一-鿿]', prompt)
                 if chinese:
                     ch_text = "".join(chinese)
-                    for cn in type_keywords:
-                        for keyword in type_keywords[cn]:
+                    for keywords in type_keywords.values():
+                        for keyword in keywords:
                             if keyword in ch_text and keyword in text:
                                 return elem
 
@@ -665,17 +817,36 @@ class DrawingAgent:
         self, cx: int, cy: int, color: str, size: int,
         cw: int, ch: int, elements: List[dict],
     ) -> List[DrawingOperation]:
-        """绘制波浪线（河流）。"""
-        start_x = 20
-        end_x = cw - 20
+        """绘制波浪线（河流）。
+
+        改进：不再横跨整张画布，而是根据画面整体构图，
+        让河流自然地从画面中部延伸，宽度适中。
+        """
+        # 计算画面中下区域（河流通常在底部）
+        # 找到所有元素的最低点
+        min_bottom = ch * 0.5  # 默认从画布 50% 处开始
+        for elem in elements:
+            bb = elem.get("bbox", {})
+            if bb.get("bottom", 0) > min_bottom:
+                min_bottom = bb["bottom"]
+
+        # 河流中心线放在所有元素的最低点下方一点
+        river_y = min_bottom + 30
+        river_y = min(river_y, ch - 60)  # 不超过画布底部
+
+        # 河流宽度：从左到右贯穿，但留边距
+        start_x = 60
+        end_x = cw - 60
 
         # 创建波浪线
         points = []
-        segments = 20
+        segments = 30
         dx = (end_x - start_x) / segments
         for i in range(segments + 1):
             x = int(start_x + i * dx)
-            y = int(cy + math.sin(i * 0.8) * 30)
+            # 正弦波浪，振幅随位置变化更自然
+            wave_amp = 15 + 10 * math.sin(i * 0.5)
+            y = int(river_y + math.sin(i * 0.8) * wave_amp)
             points.append((x, y))
 
         # 用多段直线绘制曲线
@@ -692,8 +863,11 @@ class DrawingAgent:
 
     def _extract_ai_prompt(self, text: str) -> str:
         """从 AI 生成命令中提取提示词。"""
+        text = self._strip_reference_clause(text)
         prefixes = [
             "画一个", "画一只", "画一幅", "画一张", "画一条", "画头",
+            "画一棵", "画一颗", "画一座", "画几颗", "画几个", "画几条",
+            "加一个", "加一只", "加一条", "加一座", "加几个", "加几颗",
             "画个", "画幅", "画张", "画条",
             "生成一个", "生成一只", "生成一幅", "生成一张", "生成一条",
             "做一个", "来一个", "来一只", "来一幅", "来一张",
@@ -707,6 +881,34 @@ class DrawingAgent:
                 break
 
         return prompt.rstrip("。,.！？!?,") or text
+
+    def _strip_reference_clause(self, text: str) -> str:
+        """去掉“在树下面”这类参照位置短语，保留真正要画的元素。"""
+        match = re.search(r"(?:画|加|添|生成|创建|放)(.+)$", text)
+        if match:
+            return match.group(0)
+        return text
+
+    def _build_element_prompt(self, element: str) -> str:
+        """构造交给 Agnes 的元素级 prompt，保持开放词汇。"""
+        clean = element.strip(" 。,.！？!?,")
+        return clean or element
+
+    def _extract_semantic_label(self, element: str) -> str:
+        """从元素描述中提取后续可引用的语义标签。"""
+        label = element.strip(" 。,.！？!?,")
+        label = re.sub(r"^(一些|几个|几颗|几条|一棵|一颗|一座|一个|一只|一条|一片|一朵|一辆|一幅|一张)", "", label)
+        label = re.sub(r"(的|漂亮的|可爱的|简单的|单色的|黑色|红色|蓝色|绿色|黄色|白色|紫色|橙色|棕色|灰色|粉色)", "", label)
+        return label.strip() or element.strip()
+
+    def _center_to_image_position(self, center: tuple, engine: DrawingEngine) -> tuple:
+        """AI 图片以左上角定位，语义规划以中心点定位。"""
+        x = int(center[0] - 200)
+        y = int(center[1] - 200)
+        return (
+            max(0, min(engine.canvas_width - 400, x)),
+            max(0, min(engine.canvas_height - 400, y)),
+        )
 
     def _extract_color_from_text(self, text: str) -> str:
         """从文本中提取颜色。"""
@@ -728,5 +930,7 @@ class DrawingAgent:
             return None
         for name in sorted(color_map.COLOR_MAP, key=len, reverse=True):
             if name in text:
+                if any(kw in text for kw in ["涂满", "填充", "上色", "改", "换"]):
+                    return [RecolorSelectedOperation(color=color_map.get_color(name), fill=True)]
                 return [ColorOperation(color=color_map.get_color(name))]
         return None

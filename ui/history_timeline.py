@@ -12,7 +12,8 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QSize
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
@@ -109,6 +110,7 @@ class HistoryTimelinePanel(QWidget):
         layout.addWidget(title)
 
         self.timeline_list = QListWidget()
+        self.timeline_list.setIconSize(QSize(120, 80))
         self.timeline_list.setStyleSheet("""
             QListWidget {
                 background-color: #FAFAFA;
@@ -148,6 +150,19 @@ class HistoryTimelinePanel(QWidget):
             text = f"  {i + 1}. {icon} {label}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, i)
+            self.timeline_list.addItem(item)
+
+        if self.timeline_list.count() > 0:
+            self.timeline_list.scrollToBottom()
+
+    def update_snapshots(self, snapshots: List[tuple[str, QPixmap]]) -> None:
+        """显示每一步完成后的整幅画缩略图。"""
+        self.timeline_list.clear()
+        for i, (label, pixmap) in enumerate(snapshots[:self.MAX_ENTRIES]):
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, i)
+            if not pixmap.isNull():
+                item.setIcon(QIcon(pixmap))
             self.timeline_list.addItem(item)
 
         if self.timeline_list.count() > 0:

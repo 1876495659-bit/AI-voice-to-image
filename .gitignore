@@ -14,3 +14,4 @@ output/
 *.swp
 *.swo
 .env
+.superpowers/

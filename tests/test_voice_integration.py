@@ -129,6 +129,37 @@ def test_voice_agent_labels_fills_and_details_sun() -> None:
     assert app is not None
 
 
+def test_voice_open_vocabulary_ai_element_executes_agent_plan() -> None:
+    """语音说任意元素时，主窗口应执行绘画代理生成的 AI 元素。"""
+    app = _app()
+    window = MainWindow()
+    window.engine.ai_service.generate_image = lambda prompt: b""
+
+    window.voice_service.signals.transcription_ready.emit("画一座房子", 0.95)
+
+    history = window.engine.get_history()
+    assert history
+    assert history[-1].semantic_label == "房子"
+    assert "房子" in history[-1].prompt
+    assert window.canvas.operation_count == 1
+    assert "已添加" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
+def test_voice_step_timeline_records_full_picture_snapshot() -> None:
+    """每次语音绘画后，右侧应记录整幅画快照。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+
+    assert window.timeline_panel.timeline_list.count() == 1
+    item = window.timeline_panel.timeline_list.item(0)
+    assert "第 1 步" in item.text()
+    assert not item.icon().isNull()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
@@ -137,4 +168,6 @@ if __name__ == "__main__":
     test_voice_edit_command_without_shape_keeps_error_feedback()
     test_voice_delete_command_removes_recent_shape()
     test_voice_agent_labels_fills_and_details_sun()
+    test_voice_open_vocabulary_ai_element_executes_agent_plan()
+    test_voice_step_timeline_records_full_picture_snapshot()
     print("test_voice_integration: OK")

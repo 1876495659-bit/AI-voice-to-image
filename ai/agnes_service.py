@@ -48,11 +48,13 @@ class AgnesImageService(AIService):
         "棕": "brown", "灰": "gray", "粉": "pink",
     }
 
-    # 语音常见错字纠正 — Whisper 听错的字
+    # 语音常见错字纠正 — Whisper 听错的字（按长度降序）
     _VOICE_TYPOS: dict[str, str] = {
         "一颗": "一棵",  # 树/草用"棵"
         "一科": "一棵",
-        "一颗": "一棵",
+        "画一张": "画一张", "画个": "画个",
+        "小老鬼": "小老鼠", "小老几": "小老鼠",
+        "小劳资": "小老鼠", "小劳机": "小老鼠", "小捞汁": "小老鼠",
     }
 
     # 简笔画风格引导 — 所有默认生成统一为此风格
@@ -92,33 +94,64 @@ class AgnesImageService(AIService):
                 return en, cleaned
         return None, prompt
 
+    def _clean_prompt_for_model(self, prompt: str) -> str:
+        """清理 prompt 为模型能理解的自然语言。
+
+        去掉口语化前缀、量词、标点，保留核心描述。
+        """
+        # 1. 语音错字纠正
+        for wrong, correct in self._VOICE_TYPOS.items():
+            prompt = prompt.replace(wrong, correct)
+
+        # 2. 清理口语化前缀
+        prefix_patterns = [
+            r"^(帮[我]?|想[要]|给[我]|能[不]?[以][到]?)\s*",
+            r"^(画[个只头幅张条]?\s*){1,2}",
+            r"^(生成|创建|做|来)\s*",
+            r"^[^，,。,.!?!\s]{0,4}画[^，,。,.!?!\s]{0,4}\s*",
+        ]
+        for pattern in prefix_patterns:
+            prompt = re.sub(pattern, "", prompt).strip()
+            if prompt != prompt:
+                break
+
+        # 3. 清理量词前缀
+        for prefix in ("一只", "一个", "一幅", "一棵", "一颗", "一张", "一头", "一条", "一幅", "一个",):
+            if prompt.startswith(prefix):
+                prompt = prompt[len(prefix):]
+                break
+
+        # 4. 清理颜色提取后的残留
+        color_en, cleaned = self._extract_color_from_prompt(prompt)
+        if color_en:
+            prompt = cleaned
+
+        # 5. 清理多余标点
+        prompt = re.sub(r"[，,。,.!?!\s]+$", "", prompt).strip()
+        prompt = re.sub(r"\s+", " ", prompt).strip()
+
+        return prompt if prompt else "a simple drawing"
+
     def _enhance_for_sketch_style(self, prompt: str) -> str:
         """确保提示词导向合适的风格。
 
         所有默认生成统一为单色线条画，黑色墨水。
         如果用户指定了颜色则用指定颜色；如果用户要求写实则不加引导。
         """
-        # 常见语音错字纠正
-        for wrong, correct in self._VOICE_TYPOS.items():
-            prompt = prompt.replace(wrong, correct)
-
         if any(w in prompt for w in self._REALISTIC_WORDS):
             return prompt
 
-        # 检查是否指定了颜色
-        color_en, cleaned_prompt = self._extract_color_from_prompt(prompt)
+        # 清理为干净的 prompt
+        cleaned = self._clean_prompt_for_model(prompt)
 
-        # 清理量词前缀（覆盖各种量词和错字）
-        for prefix in ("一只", "一个", "一幅", "一棵", "一颗", "一张", "一头", "一条", "一幅"):
-            if cleaned_prompt.startswith(prefix):
-                cleaned_prompt = cleaned_prompt[len(prefix):]
-                break
+        # 检查是否指定了颜色
+        color_en, ink_name = self._extract_color_from_prompt(prompt)
 
         # 默认黑色墨水，有颜色则用指定色
         ink_color = color_en if color_en else "black"
         return (
             f"a simple single-color line drawing of a "
-            f"{cleaned_prompt} drawn with {ink_color} ink, "
+            f"{cleaned} drawn with {ink_color} ink, "
             f"{self._LINE_ART.strip()}"
         )
 
