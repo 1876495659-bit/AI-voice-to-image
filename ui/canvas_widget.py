@@ -273,27 +273,28 @@ class CanvasWidget(QWidget):
         if img.isNull():
             return pixmap
 
-        # 找到非白色区域的边界
+        # 找到非白色区域的边界（亮度低于 0.97 即视为非白）
         left, right, top, bottom = img.width(), 0, img.height(), 0
+        found_any = False
         for x in range(img.width()):
             for y in range(img.height()):
                 pixel = img.pixelColor(x, y)
-                # 不是纯白或接近纯白（亮度低于 95%）
-                if pixel.lightnessF() < 0.95:
+                # 不是纯白或接近纯白
+                if pixel.lightnessF() < 0.97:
                     left = min(left, x)
                     right = max(right, x)
                     top = min(top, y)
                     bottom = max(bottom, y)
+                    found_any = True
 
-        if left > right or top > bottom:
+        if not found_any:
             # 全白图片，返回原图
             return pixmap
 
         # 裁剪
         cropped = pixmap.copy(left, top, right - left + 1, bottom - top + 1)
 
-        # 添加透明边缘（柔化效果）
-        margin = 5
+        # 将裁剪结果绘制到透明背景上
         size = cropped.size()
         result = QPixmap(size)
         result.fill(Qt.GlobalColor.transparent)
@@ -310,6 +311,9 @@ class CanvasWidget(QWidget):
             return
         target = next((op for op in self._operations if op.id == self._selected_operation_id), None)
         if target is None:
+            return
+        # AI 图片不显示虚线选择框，只显示自然轮廓
+        if isinstance(target, AIImageOperation):
             return
         bounds = self._selection_bounds(target)
         if bounds is None:
@@ -346,8 +350,8 @@ class CanvasWidget(QWidget):
             ys = [p[1] for p in op.points]
             return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
         if isinstance(op, AIImageOperation):
-            x, y = op.position
-            return x, y, 400, 400
+            # AI 图片不返回固定边界（虚线框已由 _draw_selection 跳过）
+            return None
         return None
 
     _draw_handlers = {
