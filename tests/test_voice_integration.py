@@ -160,6 +160,45 @@ def test_voice_step_timeline_records_full_picture_snapshot() -> None:
     assert app is not None
 
 
+def test_click_timeline_snapshot_rolls_back_canvas_to_that_step() -> None:
+    """点击右侧第 1 步快照应真正回退画布与历史。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+    window.voice_service.signals.transcription_ready.emit("画一个正方形", 0.95)
+    assert window.canvas.operation_count == 2
+    assert window.timeline_panel.timeline_list.count() == 2
+
+    first_item = window.timeline_panel.timeline_list.item(0)
+    window._on_timeline_click(first_item)
+
+    assert window.canvas.operation_count == 1
+    assert len(window.engine.get_history()) == 1
+    assert window.timeline_panel.timeline_list.count() == 1
+    assert "第 1 步" in window.timeline_panel.timeline_list.item(0).text()
+    assert app is not None
+
+
+def test_voice_can_roll_back_to_named_picture_step() -> None:
+    """用户说“撤销到第二步”时，应回退到对应作品步骤。"""
+    app = _app()
+    window = MainWindow()
+
+    window.voice_service.signals.transcription_ready.emit("画一个圆", 0.95)
+    window.voice_service.signals.transcription_ready.emit("画一个正方形", 0.95)
+    window.voice_service.signals.transcription_ready.emit("画一个三角形", 0.95)
+    assert window.canvas.operation_count == 3
+
+    window.voice_service.signals.transcription_ready.emit("撤销到第二步", 0.95)
+
+    assert window.canvas.operation_count == 2
+    assert len(window.engine.get_history()) == 2
+    assert window.timeline_panel.timeline_list.count() == 2
+    assert "第 2 步" in window.voice_panel.action_label.text()
+    assert app is not None
+
+
 if __name__ == "__main__":
     test_transcription_signal_drives_canvas()
     test_low_confidence_shape_command_still_draws_when_parse_is_clear()
@@ -170,4 +209,6 @@ if __name__ == "__main__":
     test_voice_agent_labels_fills_and_details_sun()
     test_voice_open_vocabulary_ai_element_executes_agent_plan()
     test_voice_step_timeline_records_full_picture_snapshot()
+    test_click_timeline_snapshot_rolls_back_canvas_to_that_step()
+    test_voice_can_roll_back_to_named_picture_step()
     print("test_voice_integration: OK")

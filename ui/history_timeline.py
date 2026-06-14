@@ -155,10 +155,11 @@ class HistoryTimelinePanel(QWidget):
         if self.timeline_list.count() > 0:
             self.timeline_list.scrollToBottom()
 
-    def update_snapshots(self, snapshots: List[tuple[str, QPixmap]]) -> None:
+    def update_snapshots(self, snapshots: List[tuple]) -> None:
         """显示每一步完成后的整幅画缩略图。"""
         self.timeline_list.clear()
-        for i, (label, pixmap) in enumerate(snapshots[:self.MAX_ENTRIES]):
+        for i, snapshot in enumerate(snapshots[:self.MAX_ENTRIES]):
+            label, pixmap = snapshot[0], snapshot[1]
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, i)
             if not pixmap.isNull():

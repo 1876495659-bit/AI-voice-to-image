@@ -14,7 +14,7 @@ from engine.operations import AIImageOperation, CircleOperation, LineDrawOperati
 
 def test_agent_labels_recent_shape_as_sun() -> None:
     """理解“刚刚画的是太阳”，并给当前图形标注语义。"""
-    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    engine = DrawingEngine(canvas_width=800, canvas_height=1080)
     circle = CircleOperation(center=(300, 220), radius=50)
     engine.execute(circle)
 
@@ -28,7 +28,7 @@ def test_agent_labels_recent_shape_as_sun() -> None:
 
 def test_agent_fills_current_circle_with_yellow() -> None:
     """理解“用黄色涂满这个圆”，生成填充当前图形的操作。"""
-    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    engine = DrawingEngine(canvas_width=800, canvas_height=1080)
     circle = CircleOperation(center=(300, 220), radius=50, color="#000000", filled=False)
     engine.execute(circle)
 
@@ -75,7 +75,7 @@ def test_agent_generates_open_vocabulary_ai_element() -> None:
 
 def test_agent_places_open_vocabulary_element_near_reference() -> None:
     """新元素应能引用之前由模型生成的语义元素位置。"""
-    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    engine = DrawingEngine(canvas_width=800, canvas_height=1080)
     tree = AIImageOperation(prompt="树", position=(200, 80))
     tree.semantic_label = "树"
     engine.history.push(tree)
@@ -88,7 +88,27 @@ def test_agent_places_open_vocabulary_element_near_reference() -> None:
     assert isinstance(op, AIImageOperation)
     assert "小河" in op.prompt
     assert op.semantic_label == "小河"
-    assert op.position[1] > tree.position[1]
+    assert op.position[1] >= 500
+
+
+def test_agent_recolors_named_ai_element() -> None:
+    """“用蓝色涂满小河”应按语义目标给小河上色。"""
+    engine = DrawingEngine(canvas_width=800, canvas_height=600)
+    river = AIImageOperation(prompt="小河", position=(100, 420), color="#000000")
+    river.semantic_label = "小河"
+    engine.execute(river)
+
+    agent = DrawingAgent()
+    operations = agent.plan("用蓝色涂满小河", engine)
+
+    assert len(operations) == 1
+    op = operations[0]
+    assert isinstance(op, RecolorSelectedOperation)
+    assert op.color == "#0000FF"
+    assert op.target_label == "小河"
+
+    engine.execute_multiple(operations)
+    assert river.color == "#0000FF"
 
 
 if __name__ == "__main__":
@@ -97,4 +117,5 @@ if __name__ == "__main__":
     test_agent_adds_sun_details_around_labeled_circle()
     test_agent_generates_open_vocabulary_ai_element()
     test_agent_places_open_vocabulary_element_near_reference()
+    test_agent_recolors_named_ai_element()
     print("test_drawing_agent: OK")

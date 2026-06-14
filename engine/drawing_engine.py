@@ -345,7 +345,7 @@ class DrawingEngine:
 
     def _handle_recolor_selected(self, operation: RecolorSelectedOperation) -> None:
         """修改当前选中图形颜色。"""
-        target = self._resolve_edit_target()
+        target = self.find_semantic_target(operation.target_label) if operation.target_label else self._resolve_edit_target()
         if target is None:
             self.signals.edit_failed.emit("没有可编辑的图形，请先画一个图形")
             return
@@ -466,7 +466,13 @@ class DrawingEngine:
         """查找当前或最近的语义对象。"""
         if label:
             for op in reversed(self.history.history):
-                if self._is_editable_operation(op) and getattr(op, "semantic_label", "") == label:
+                semantic_label = getattr(op, "semantic_label", "")
+                prompt = getattr(op, "prompt", "")
+                if self._is_editable_operation(op) and (
+                    semantic_label == label
+                    or (semantic_label and (semantic_label in label or label in semantic_label))
+                    or (prompt and label in prompt)
+                ):
                     return op
         return self._resolve_edit_target()
 

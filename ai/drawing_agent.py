@@ -116,6 +116,12 @@ class DrawingAgent:
             return None
         for name in sorted(color_map.COLOR_MAP, key=len, reverse=True):
             if name in text:
+                if any(kw in text for kw in ["涂满", "填充", "上色", "改", "换"]):
+                    return [RecolorSelectedOperation(
+                        color=color_map.get_color(name),
+                        target_label=self._extract_target_label_from_text(text),
+                        fill=True,
+                    )]
                 return [ColorOperation(color=color_map.get_color(name))]
         return None
 
@@ -265,9 +271,7 @@ class DrawingAgent:
         if not prompt:
             prompt = text
 
-        # 计算位置：有参照物就放参照物旁边，否则放画布中心。
-        center = self._compute_element_position(text, canvas_elements, engine)
-        pos = self._center_to_image_position(center, engine)
+        pos = self._compute_ai_image_position(text, canvas_elements, engine)
         op = AIImageOperation(prompt=self._build_element_prompt(prompt), position=pos)
         op.semantic_label = self._extract_semantic_label(prompt)
         op.color = self._extract_color_from_text(text)
@@ -673,6 +677,37 @@ class DrawingAgent:
         # 4. 画布为空：默认中心
         return (cw // 2, ch // 2)
 
+    def _compute_ai_image_position(
+        self,
+        text: str,
+        canvas_elements: List[dict],
+        engine: DrawingEngine,
+    ) -> tuple:
+        """计算 AI 元素左上角，避免新增元素压住参照物。"""
+        ref_elem = self._find_reference_element(text, canvas_elements)
+        if ref_elem:
+            bbox = ref_elem["bbox"]
+            gap = 24
+            if "上" in text and "下" not in text:
+                x = int(bbox["cx"] - 200)
+                y = int(bbox["top"] - 400 - gap)
+            elif "下" in text:
+                x = int(bbox["cx"] - 200)
+                y = int(bbox["bottom"] + gap)
+            elif "左" in text:
+                x = int(bbox["left"] - 400 - gap)
+                y = int(bbox["cy"] - 200)
+            elif "右" in text or "旁边" in text or "边" in text:
+                x = int(bbox["right"] + gap)
+                y = int(bbox["cy"] - 200)
+            else:
+                x = int(bbox["right"] + gap)
+                y = int(bbox["cy"] - 200)
+            return self._fit_image_position((x, y), engine)
+
+        center = self._compute_element_position(text, canvas_elements, engine)
+        return self._center_to_image_position(center, engine)
+
     def _find_reference_element(
         self, text: str, elements: List[dict],
     ) -> Optional[dict]:
@@ -905,10 +940,27 @@ class DrawingAgent:
         """AI 图片以左上角定位，语义规划以中心点定位。"""
         x = int(center[0] - 200)
         y = int(center[1] - 200)
+        return self._fit_image_position((x, y), engine)
+
+    def _fit_image_position(self, position: tuple, engine: DrawingEngine) -> tuple:
+        """将 400px AI 元素放置在画布内。"""
+        x, y = position
         return (
             max(0, min(engine.canvas_width - 400, x)),
             max(0, min(engine.canvas_height - 400, y)),
         )
+
+    def _extract_target_label_from_text(self, text: str) -> str:
+        """从“涂满小河/把云换成蓝色”中提取被编辑对象。"""
+        candidates = [
+            "小溪", "溪流", "小河", "河流", "河",
+            "大树", "树", "苹果", "房子", "房屋", "桥", "云", "太阳",
+        ]
+        for label in candidates:
+            if label in text:
+                return label
+        match = re.search(r"(?:涂满|填充|上色|改|换)[^一-鿿]*([一-鿿]{1,6})", text)
+        return match.group(1) if match else ""
 
     def _extract_color_from_text(self, text: str) -> str:
         """从文本中提取颜色。"""
@@ -931,6 +983,10 @@ class DrawingAgent:
         for name in sorted(color_map.COLOR_MAP, key=len, reverse=True):
             if name in text:
                 if any(kw in text for kw in ["涂满", "填充", "上色", "改", "换"]):
-                    return [RecolorSelectedOperation(color=color_map.get_color(name), fill=True)]
+                    return [RecolorSelectedOperation(
+                        color=color_map.get_color(name),
+                        target_label=self._extract_target_label_from_text(text),
+                        fill=True,
+                    )]
                 return [ColorOperation(color=color_map.get_color(name))]
         return None

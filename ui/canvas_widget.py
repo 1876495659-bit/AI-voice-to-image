@@ -284,6 +284,7 @@ class CanvasWidget(QWidget):
         if pixmap.loadFromData(op.image_bytes):
             # 裁剪白边
             cropped = self._crop_white_edges(pixmap)
+            cropped = self._tint_line_art(cropped, op.color)
             x, y = op.position
             max_size = 400
             scaled = cropped.scaled(max_size, max_size,
@@ -390,6 +391,28 @@ class CanvasWidget(QWidget):
         painter.end()
 
         return result
+
+    def _tint_line_art(self, pixmap: QPixmap, color: str) -> QPixmap:
+        """将 AI 单色线稿的深色笔触重着色，支持语音涂色。"""
+        target = QColor(color)
+        if not target.isValid() or target.name().upper() == "#000000":
+            return pixmap
+
+        img = pixmap.toImage()
+        if img.isNull():
+            return pixmap
+
+        for y in range(img.height()):
+            for x in range(img.width()):
+                pixel = img.pixelColor(x, y)
+                if pixel.alpha() == 0:
+                    continue
+                if pixel.lightnessF() < 0.72:
+                    target_pixel = QColor(target)
+                    target_pixel.setAlpha(pixel.alpha())
+                    img.setPixelColor(x, y, target_pixel)
+
+        return QPixmap.fromImage(img)
 
     def _draw_selection(self, painter: QPainter) -> None:
         if not self._selected_operation_id:

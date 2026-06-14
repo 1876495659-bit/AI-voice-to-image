@@ -290,6 +290,7 @@ class RecolorSelectedOperation(DrawingOperation):
 
     op_type: OperationType = field(default=OperationType.RECOLOR_SELECTED, init=False)
     target_id: str = ""
+    target_label: str = ""
     fill: bool | None = None
     before: DrawingOperation | None = None
     after: DrawingOperation | None = None

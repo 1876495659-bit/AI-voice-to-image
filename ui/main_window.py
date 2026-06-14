@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from PyQt6.QtCore import Qt
@@ -291,6 +292,9 @@ class MainWindow(QMainWindow):
         # 先同步画布操作列表到 parser（供智能参照物匹配使用）
         self.parser.update_canvas_operations(self.engine.get_history())
 
+        if self._try_rollback_to_step(text):
+            return
+
         # 同步画布操作列表到 agent（供智能位置规划使用）
         canvas_ops = self.engine.get_history()
 
@@ -386,11 +390,42 @@ class MainWindow(QMainWindow):
     def _on_timeline_click(self, item) -> None:
         """点击时间线某项，撤销到该步。"""
         index = item.data(Qt.ItemDataRole.UserRole)
-        history = self.engine.get_history()
-        steps_to_undo = len(history) - 1 - index
-        if steps_to_undo > 0:
-            for _ in range(steps_to_undo):
-                self.engine.undo()
+        if not isinstance(index, int) or index < 0 or index >= len(self._picture_snapshots):
+            return
+        self._rollback_to_picture_index(index)
+
+    def _try_rollback_to_step(self, text: str) -> bool:
+        """识别“撤销到第二步/回到第2步”并回退作品步骤。"""
+        if not any(word in text for word in ("撤销到", "回到", "退回", "返回")):
+            return False
+        match = re.search(r"第?([一二三四五六七八九十\d]+)步", text)
+        if not match:
+            return False
+        step = self._parse_step_number(match.group(1))
+        if step is None or step < 1 or step > len(self._picture_snapshots):
+            self.voice_panel.show_error("没有找到对应的作品步骤")
+            return True
+        self._rollback_to_picture_index(step - 1)
+        self.voice_panel.show_action(f"已回退到第 {step} 步")
+        return True
+
+    def _parse_step_number(self, value: str) -> Optional[int]:
+        if value.isdigit():
+            return int(value)
+        numerals = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        }
+        return numerals.get(value)
+
+    def _rollback_to_picture_index(self, index: int) -> None:
+        """回退到右侧作品快照对应的历史长度。"""
+        target_snapshot = self._picture_snapshots[index]
+        target_history_len = target_snapshot[2] if len(target_snapshot) >= 3 else index + 1
+        while len(self.engine.get_history()) > target_history_len:
+            self.engine.undo()
+        self._picture_snapshots = self._picture_snapshots[:index + 1]
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
 
     def _is_renderable_operation(self, operation) -> bool:
         return isinstance(operation, (
@@ -409,17 +444,19 @@ class MainWindow(QMainWindow):
             return
         label = f"第 {len(self._picture_snapshots) + 1} 步：{text}"
         snapshot = self.canvas.render_snapshot(self._renderable_history())
-        self._picture_snapshots.append((label, snapshot))
+        self._picture_snapshots.append((label, snapshot, len(self.engine.get_history())))
         self.timeline_panel.update_snapshots(self._picture_snapshots)
 
     def _refresh_latest_picture_snapshot(self) -> None:
         """AI 图片异步生成后，用最新画面刷新最后一步缩略图。"""
         if not self._picture_snapshots:
             return
-        label, _ = self._picture_snapshots[-1]
+        label = self._picture_snapshots[-1][0]
+        history_len = self._picture_snapshots[-1][2] if len(self._picture_snapshots[-1]) >= 3 else len(self.engine.get_history())
         self._picture_snapshots[-1] = (
             label,
             self.canvas.render_snapshot(self._renderable_history()),
+            history_len,
         )
         self.timeline_panel.update_snapshots(self._picture_snapshots)
 
