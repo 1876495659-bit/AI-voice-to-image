@@ -1,85 +1,91 @@
-"""主窗口组装 — 美化版。
+"""主窗口 — 极简留白风格。
 
-新增可交互按钮：
-- 左侧工具栏：工具按钮（笔/橡皮/线条/画圆/画矩形/画三角形/画星/清空/撤销）
-- 底部颜色面板：30+ 颜色色块可点击选择
-- 画布缩放滑块 + 导航控制
-- 整体深色风格 + 圆角卡片布局
+仅保留两块内容：
+1. 中央白布（画布）
+2. 底部语音输入指示器（麦克风状态 + 识别文字）
+
+移除了：左侧工具栏、颜色面板、命令历史面板、音量柱状图、缩放滑块。
+所有交互通过语音完成。
 
 引用:
 - `engine/drawing_engine.py` — DrawingEngine 绘图引擎
 - `voice/voice_service.py` — VoiceService 语音服务
 - `parser/command_parser.py` — CommandParser 命令解析
-- `parser/color_map.py` — 颜色映射表（获取颜色名列表）
 - `ui/canvas_widget.py` — CanvasWidget 画布
 - `ui/voice_feedback_panel.py` — VoiceFeedbackPanel 语音反馈
-- `ui/command_history_panel.py` — CommandHistoryPanel 命令历史
-- `engine/operations.py` — 操作类
 """
 
 from __future__ import annotations
 
-import math
-from typing import Dict, List, Optional
+import logging
+import re
+from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRect, QPointF
-from PyQt6.QtGui import (
-    QAction,
-    QColor,
-    QFont,
-    QPalette,
-    QLinearGradient,
-)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction, QColor, QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QScrollArea,
-    QSlider,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 import config
+from ai.drawing_agent import DrawingAgent
 from engine.drawing_engine import DrawingEngine
-from parser import color_map
+from engine.operations import (
+    AIImageOperation,
+    CircleOperation,
+    DeleteSelectedOperation,
+    FreehandOperation,
+    LineDrawOperation,
+    LabelSelectedOperation,
+    MoveSelectedOperation,
+    OperationType,
+    RecolorSelectedOperation,
+    RectangleOperation,
+    ScaleSelectedOperation,
+    SelectLastOperation,
+    StarOperation,
+    StrokeGroupOperation,
+    TriangleOperation,
+)
 from parser.command_parser import CommandParser
 from ui.canvas_widget import CanvasWidget
-from ui.command_history_panel import CommandHistoryPanel
 from ui.voice_feedback_panel import VoiceFeedbackPanel
 from voice.voice_service import VoiceService
 
-# ── 工具栏颜色 ───────────────────────────────────────────────
-BG_DARK = "#1E1E2E"
-BG_CARD = "#2A2A3C"
-BG_HOVER = "#3A3A50"
-ACCENT = "#6C63FF"
-ACCENT_PRESSED = "#5544CC"
-TEXT_PRIMARY = "#EAEAEA"
-TEXT_SECONDARY = "#AAAAAA"
-TEXT_DIM = "#777777"
-BORDER_LIGHT = "#3A3A4C"
+logger = logging.getLogger(__name__)
+
+# ── 极简配色 ───────────────────────────────────────────────
+BG = "#F5F5F7"          # Apple 浅灰背景
+WHITE = "#FFFFFF"        # 画布白
+INK = "#1D1D1F"          # 主文字（Apple 深灰）
+MUTED = "#86868B"        # 次要文字
+ACCENT = "#0071E3"       # Apple 蓝
+ACCENT_SOFT = "#E8F2FF"  # 蓝色浅底
+BORDER = "#D2D2D7"       # 微妙边框
 
 
 class MainWindow(QMainWindow):
-    """主窗口 — 深色主题 + 工具栏 + 颜色面板 + 画布缩放。
+    """极简语音绘图窗口。
 
-    布局（从左到右）:
-        ┌──────┬──────────────────────────────┐
-        │工具栏│  语音反馈面板                 │
-        ├──────┼──────────────────────────────┤
-        │      │  画布 + 缩放控制              │
-        │      │                              │
-        ├──────┤                              │
-        │      │  命令历史面板                 │
-        ├──────┤                              │
-        │      │  颜色面板（30+ 色块）         │
-        └──────┴──────────────────────────────┘
+    布局:
+        ┌─────────────────────────────────┐
+        │                                 │
+        │         白布（画布）             │
+        │                                 │
+        │                                 │
+        ├─────────────────────────────────┤
+        │   🎤  请说话...                  │
+        │   ━━━━━━━━━━━━━━━━━━━━ 进度条    │
+        │   [ 开始语音识别 ]               │
+        └─────────────────────────────────┘
     """
 
     def __init__(self) -> None:
@@ -93,171 +99,156 @@ class MainWindow(QMainWindow):
     # ── 窗口 ────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("AI 语音绘图")
-        self.setMinimumSize(1100, 700)
-        self.resize(1600, 950)
+        self.setWindowTitle("语音绘图")
+        self.setMinimumSize(960, 640)
+        self.resize(1280, 860)
 
-        # 深色主题
         palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(BG_DARK))
+        palette.setColor(QPalette.ColorRole.Window, QColor(BG))
         self.setPalette(palette)
 
         self.setStyleSheet(f"""
-            QMainWindow, QFrame {{
-                background-color: {BG_DARK};
-            }}
-            QFrame#canvasFrame {{
-                background-color: #FFFFFF;
-                border: 2px solid {BORDER_LIGHT};
-                border-radius: 8px;
+            QMainWindow {{
+                background-color: {BG};
             }}
         """)
 
     # ── 组件 ────────────────────────────────────────────────
 
     def _create_components(self) -> None:
-        # 引擎
+        # 引擎 + 服务
         self.engine = DrawingEngine(
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
         self.voice_service = VoiceService()
+        self._voice_listening_active = False
         self.parser = CommandParser(
             fallback_threshold=config.WHISPER_FALLBACK_THRESHOLD,
             canvas_width=config.CANVAS_DEFAULT_WIDTH,
             canvas_height=config.CANVAS_DEFAULT_HEIGHT,
         )
+        self.drawing_agent = DrawingAgent()
+        self._picture_snapshots = []
 
-        # 左侧工具栏
-        self.toolbar = Toolbar()
-
-        # 右侧主区域
-        self.main_widget = QWidget()
-        main_layout = QVBoxLayout(self.main_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
-
-        # 语音反馈面板
-        self.voice_panel = VoiceFeedbackPanel()
-        main_layout.addWidget(self.voice_panel)
-
-        # 画布
-        self.canvas_frame = QFrame()
-        self.canvas_frame.setObjectName("canvasFrame")
-        canvas_layout = QVBoxLayout(self.canvas_frame)
-        canvas_layout.setContentsMargins(4, 4, 4, 4)
-
+        # 画布（白布）
         self.canvas = CanvasWidget(
             width=config.CANVAS_DEFAULT_WIDTH,
             height=config.CANVAS_DEFAULT_HEIGHT,
         )
-        self.canvas.setMinimumSize(800, 500)
+        self.canvas.set_zoom(50)
 
-        # 画布缩放控制
-        self.zoom_label = QLabel("缩放: 100%")
-        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
-        self.zoom_slider.setRange(20, 300)
-        self.zoom_slider.setValue(100)
-        self.zoom_slider.setFixedHeight(24)
-        self.zoom_slider.valueChanged.connect(self._on_zoom_changed)
-
-        zoom_layout = QHBoxLayout()
-        zoom_layout.setContentsMargins(0, 2, 0, 0)
-        zoom_layout.addWidget(QLabel("缩放:"))
-        zoom_layout.addWidget(self.zoom_slider)
-        zoom_layout.addWidget(self.zoom_label)
-        zoom_layout.addStretch()
-        zoom_layout.addWidget(QLabel(f"画布: {config.CANVAS_DEFAULT_WIDTH}×{config.CANVAS_DEFAULT_HEIGHT}"))
-
-        canvas_layout.addWidget(self.canvas)
-        canvas_layout.addLayout(zoom_layout)
-        main_layout.addWidget(self.canvas_frame, stretch=1)
-
-        # 画布缩放 transform（简单实现：setMinimumSize 模拟）
-        self._current_zoom = 100
-
-        # 命令历史面板
-        self.history_panel = CommandHistoryPanel()
-        main_layout.addWidget(self.history_panel)
-
-        # 颜色面板
-        self.color_panel = ColorPalette()
-        self.color_panel.color_selected.connect(self._on_color_selected)
-        main_layout.addWidget(self.color_panel)
-
-        # 主布局
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(3)
-        splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background-color: {BORDER_LIGHT};
-                border-radius: 2px;
+        self.canvas_scroll = QScrollArea()
+        self.canvas_scroll.setWidget(self.canvas)
+        self.canvas_scroll.setWidgetResizable(False)
+        self.canvas_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.canvas_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {BG};
+                border: none;
             }}
         """)
-        splitter.addWidget(self.toolbar)
-        splitter.addWidget(self.main_widget)
-        splitter.setSizes([180, 920])
 
+        # 语音反馈面板
+        self.voice_panel = VoiceFeedbackPanel()
+
+        # 操作历史时间线面板
+        from ui.history_timeline import HistoryTimelinePanel
+        self.timeline_panel = HistoryTimelinePanel()
+
+        # 主布局 — 左右分栏：左侧画布+语音，右侧时间线
         central = QWidget()
-        outer_layout = QVBoxLayout(central)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(splitter)
-        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(24, 24, 24, 24)
+        main_layout.setSpacing(16)
 
-        # 工具栏连接
-        self.toolbar.tool_selected.connect(self._on_tool_selected)
-        self.toolbar.action_clear.connect(self.engine.clear)
-        self.toolbar.action_undo.connect(self.engine.undo)
+        # 左侧: 画布区域 + 语音面板
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(16)
+
+        canvas_frame = QFrame()
+        canvas_frame.setObjectName("canvasFrame")
+        canvas_frame.setStyleSheet(f"""
+            #canvasFrame {{
+                background-color: {WHITE};
+                border: 1px solid {BORDER};
+                border-radius: 16px;
+            }}
+        """)
+        canvas_inner = QVBoxLayout(canvas_frame)
+        canvas_inner.setContentsMargins(0, 0, 0, 0)
+        canvas_inner.addWidget(self.canvas_scroll)
+        left_col.addWidget(canvas_frame, stretch=1)
+        left_col.addWidget(self.voice_panel)
+
+        main_layout.addLayout(left_col, stretch=1)
+
+        # 右侧: 时间线面板
+        main_layout.addWidget(self.timeline_panel, stretch=0)
+
+        self.setCentralWidget(central)
 
     def _connect_signals(self) -> None:
         self.voice_service.signals.transcription_ready.connect(
             self._on_transcription_ready
         )
+        self.voice_service.signals.partial_transcription.connect(
+            self.voice_panel.show_partial_transcription
+        )
+        self.voice_service.signals.recognition_started.connect(
+            self.voice_panel.show_recognition_started
+        )
         self.voice_service.signals.listening_started.connect(
-            self.voice_panel.show_listening
+            self._on_listening_started
         )
         self.voice_service.signals.listening_stopped.connect(
-            self.voice_panel.show_silence
+            self._on_listening_stopped
         )
         self.voice_service.signals.error.connect(
             self.voice_panel.show_error
         )
-        # 音量指示器
         self.voice_service.audio_buffer.volume_changed.connect(
             self.voice_panel.show_volume
         )
+        self.voice_panel.listen_requested.connect(
+            self._on_listen_requested
+        )
         self.engine.signals.operation_added.connect(
             self.canvas.add_operation
         )
         self.engine.signals.canvas_cleared.connect(
             self.canvas.clear
         )
-    def _on_repaint(self) -> None:
-        """撤销/重做后重建画布操作列表。"""
-        self.canvas.clear()
-        for op in self.engine.get_history():
-            self.canvas._operations.append(op)
-        self.canvas.update()
-
-    def _connect_signals(self) -> None:
-        """连接各组件信号。"""
-        self.engine.signals.operation_added.connect(
-            self.canvas.add_operation
-        )
         self.engine.signals.canvas_cleared.connect(
-            self.canvas.clear
+            self._clear_picture_snapshots
         )
         self.engine.signals.repaint.connect(
             self._on_repaint
         )
+        self.engine.signals.selection_changed.connect(
+            self.canvas.set_selected_operation
+        )
+        self.engine.signals.edit_failed.connect(
+            self.voice_panel.show_error
+        )
+        self.engine.signals.background_changed.connect(
+            self.canvas.set_background_color
+        )
+        self.engine.signals.canvas_i2i_finished.connect(
+            self._on_canvas_i2i_finished
+        )
+        self.timeline_panel.item_clicked.connect(
+            self._on_timeline_click
+        )
 
     def _setup_shortcuts(self) -> None:
-        esc = QAction(self)
+        esc = QAction("Esc", self)
         esc.setShortcut("Esc")
         esc.triggered.connect(self.voice_service.stop_listening)
         self.addAction(esc)
 
-        undo = QAction(self)
+        undo = QAction("Undo", self)
         undo.setShortcut("Ctrl+Z")
         undo.triggered.connect(self.engine.undo)
         self.addAction(undo)
@@ -274,286 +265,350 @@ class MainWindow(QMainWindow):
             self.voice_service.stop_listening()
             return
 
+        self._execute_voice_text(text, confidence)
+
+    def _on_listening_started(self) -> None:
+        self._voice_listening_active = True
+        self.voice_panel.show_listening()
+
+    def _on_listening_stopped(self) -> None:
+        self._voice_listening_active = False
+        self.voice_panel.show_silence()
+
+    def _on_execute_requested(self, text: str) -> None:
+        self._execute_voice_text(text, 1.0, manual=True)
+
+    def _on_listen_requested(self) -> None:
+        if self._voice_listening_active or self.voice_service.is_listening:
+            self.voice_service.stop_listening()
+            self._voice_listening_active = False
+            self.voice_panel.set_listening_active(False)
+            return
+
+        if self.voice_service._base_model is None:
+            self.voice_panel.show_error("语音识别模型未就绪，请稍后再试")
+            return
+
+        if self.voice_service.start_listening():
+            self._voice_listening_active = True
+            self.voice_panel.set_listening_active(True)
+
+    def _execute_voice_text(self, text: str, confidence: float, manual: bool = False) -> None:
+        # 先同步画布操作列表到 parser（供智能参照物匹配使用）
+        self.parser.update_canvas_operations(self.engine.get_history())
+
+        if self._try_rollback_to_step(text):
+            return
+
+        system_result = self.parser.parse(text, confidence)
+        if self._is_immediate_system_command(system_result.operations):
+            self.engine.execute_multiple(system_result.operations)
+            self.voice_panel.show_action(self._describe_operations(system_result.operations))
+            return
+
+        # 同步画布操作列表到 agent（供智能位置规划使用）
+        canvas_ops = self.engine.get_history()
+
+        if self._should_use_model_canvas(text):
+            self.voice_panel.show_ai_loading("整幅画")
+            if self.engine.start_canvas_i2i(text):
+                self.voice_panel.show_action(f"正在更新整幅画：{text}")
+                return
+            self.voice_panel.clear_ai_loading()
+            self.voice_panel.show_error("AI 正在生成中，请稍等")
+            return
+
+        # I2I 模式：如果已经生成过第一张图，且用户是在扩展画面
+        if self.engine.is_i2i_mode() and self._is_i2i_extension(text, canvas_ops):
+            delta = self.drawing_agent.build_i2i_delta(text, canvas_ops)
+            if self.engine.execute_i2i(delta):
+                self._record_picture_step(text)
+                self.voice_panel.show_action(f"已扩展：{delta}")
+                self.voice_panel.clear_ai_loading()
+                return
+            # I2I 失败，回退到正常流程
+            logger.warning("I2I 执行失败，回退到正常流程")
+
+        agent_ops = self.drawing_agent.plan(text, self.engine, canvas_ops)
+        if agent_ops:
+            if self._requires_edit_target(agent_ops) and not self.engine.has_edit_target():
+                self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
+                return
+            self.engine.execute_multiple(agent_ops)
+            self._record_picture_step(text)
+            # 对 AIImageOperation 显示加载提示
+            for op in agent_ops:
+                if isinstance(op, AIImageOperation):
+                    label = op.semantic_label or op.prompt
+                    if label:
+                        self.voice_panel.show_ai_loading(label)
+                        break  # 只显示一次
+            prefix = "已执行: " if not manual else "手动执行: "
+            self.voice_panel.show_action(f"{prefix}{self._describe_operations(agent_ops)}")
+            return
+
         result = self.parser.parse(text, confidence)
         if result.is_success:
+            if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
+                self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
+                return
             self.engine.execute_multiple(result.operations)
-            op_names = [op.op_type.name for op in result.operations]
-            self.voice_panel.show_action(", ".join(op_names))
-            self.history_panel.add_entry(result)
+            self._record_picture_step(text)
+            # 对 AIImageOperation 显示加载提示
+            for op in result.operations:
+                if isinstance(op, AIImageOperation):
+                    label = op.semantic_label or op.prompt
+                    if label:
+                        self.voice_panel.show_ai_loading(label)
+                        break
+            prefix = "已执行: " if not manual else "手动执行: "
+            self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
         elif result.is_uncertain:
-            self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
-            self.history_panel.add_entry(result)
+            if result.operations:
+                if self._requires_edit_target(result.operations) and not self.engine.has_edit_target():
+                    self.voice_panel.show_error("没有可编辑的图形，请先画一个图形")
+                    return
+                self.engine.execute_multiple(result.operations)
+                self._record_picture_step(text)
+                prefix = "手动执行: " if manual else "低置信已执行: "
+                self.voice_panel.show_action(f"{prefix}{self._describe_operations(result.operations)}")
+            else:
+                self.voice_panel.show_error(result.uncertain.reason if result.uncertain else "不确定")
         else:
             self.voice_panel.show_error("未识别")
-            self.history_panel.add_entry(result)
 
-    def _on_tool_selected(self, tool: str) -> None:
-        """工具栏按钮触发工具切换。"""
-        from engine.operations import PenTool, EraserTool, LineTool
-        if tool == "pen":
-            self.engine.execute(PenTool())
-        elif tool == "eraser":
-            self.engine.execute(EraserTool())
-        elif tool == "line":
-            self.engine.execute(LineTool())
+    def _describe_operations(self, operations) -> str:
+        if not operations:
+            return "未识别"
 
-    def _on_color_selected(self, hex_color: str, color_name: str) -> None:
-        """颜色面板选择。"""
-        from engine.operations import ColorOperation
-        self.engine.execute(ColorOperation(color=hex_color))
-        self.toolbar.set_current_color(hex_color)
+        op = operations[-1]
+        if isinstance(op, MoveSelectedOperation):
+            if op.target_position is not None:
+                return "已将图形移动到指定位置"
+            if abs(op.dx) >= abs(op.dy):
+                direction = "右" if op.dx > 0 else "左"
+                amount = abs(op.dx)
+            else:
+                direction = "下" if op.dy > 0 else "上"
+                amount = abs(op.dy)
+            return f"已将最近图形向{direction}移动 {amount}px"
+        if isinstance(op, ScaleSelectedOperation):
+            if op.factor >= 1:
+                return f"已将最近图形放大 {int(round((op.factor - 1) * 100))}%"
+            return f"已将最近图形缩小 {int(round((1 - op.factor) * 100))}%"
+        if isinstance(op, RecolorSelectedOperation):
+            return "已修改最近图形颜色"
+        if isinstance(op, LabelSelectedOperation):
+            return f"已记住：这个图形是{op.label}"
+        if isinstance(op, DeleteSelectedOperation):
+            return "已删除最近图形"
+        if isinstance(op, SelectLastOperation):
+            return "已选中最近图形"
+        if op.op_type == OperationType.CLEAR:
+            return "已清空画布"
+        if op.op_type == OperationType.UNDO:
+            return "已撤销一步"
+        if op.op_type == OperationType.REDO:
+            return "已重做一步"
+        if isinstance(op, AIImageOperation):
+            label = getattr(op, "semantic_label", "") or getattr(op, "prompt", "")
+            # 检查同组操作数量
+            group_id = getattr(op, "group_id", "")
+            if group_id:
+                group_count = sum(1 for o in operations if getattr(o, "group_id", "") == group_id)
+                if group_count > 1:
+                    return f"已添加{group_count}个{label}"
+            return f"已添加{label}"
+        if isinstance(op, StrokeGroupOperation):
+            label = getattr(op, "semantic_label", "") or "笔画"
+            return f"已添加{label}笔画"
+        if any(getattr(item, "semantic_label", "").startswith("太阳") for item in operations):
+            return "已补充太阳细节"
 
-    def _on_zoom_changed(self, value: int) -> None:
-        self._current_zoom = value
-        self.zoom_label.setText(f"缩放: {value}%")
-        w = int(config.CANVAS_DEFAULT_WIDTH * value / 100)
-        h = int(config.CANVAS_DEFAULT_HEIGHT * value / 100)
-        self.canvas.setMinimumSize(w, h)
+        return ", ".join(item.op_type.name for item in operations)
 
+    def _should_use_model_canvas(self, text: str) -> bool:
+        """判断是否应把语音交给模型更新整幅画布。"""
+        stripped = text.strip()
+        if not stripped:
+            return False
 
-# ── 左侧工具栏 ─────────────────────────────────────────────────
+        if any(word in stripped for word in (
+            "清空", "撤销", "回到", "返回", "退回",
+            "开始监听", "停止监听", "停止识别", "暂停",
+        )):
+            return False
+        if any(word in stripped for word in ("画的是", "这是", "这个是", "叫做", "叫")):
+            return False
+        if any(word in stripped for word in ("放大画布", "缩小画布", "移动画布", "平移画布")):
+            return False
 
-class Toolbar(QFrame):
-    """左侧垂直工具栏。"""
-
-    tool_selected = pyqtSignal(str)
-    action_clear = pyqtSignal()
-    action_undo = pyqtSignal()
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("toolbarFrame")
-        self.setStyleSheet(f"""
-            #toolbarFrame {{
-                background-color: {BG_CARD};
-                border: none;
-                border-radius: 6px;
-            }}
-        """)
-
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 12)
-        layout.setSpacing(6)
-
-        # 标题
-        title = QLabel("工具")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; padding: 4px 0;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        layout.addSpacing(4)
-
-        # 绘图工具组
-        group_label = QLabel("绘图工具")
-        group_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(group_label)
-
-        self._add_tool_button("✏️ 画笔", "pen", icon="🖊️")
-        self._add_tool_button("🧹 橡皮", "eraser", icon="🧽")
-        self._add_tool_button("📏 线条", "line", icon="📐")
-        layout.addSpacing(4)
-
-        # 形状工具组
-        shape_label = QLabel("形状工具")
-        shape_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(shape_label)
-
-        self._add_shape_button("⭕ 圆形", "画个圆")
-        self._add_shape_button("🟦 矩形", "画个矩形")
-        self._add_shape_button("🔺 三角形", "画个三角形")
-        self._add_shape_button("⭐ 星形", "画个星")
-        layout.addSpacing(4)
-
-        # 操作组
-        action_label = QLabel("操作")
-        action_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 2px 0;")
-        layout.addWidget(action_label)
-
-        self._add_action_button("↩ 撤销", self._on_undo)
-        self._add_action_button("🗑 清空", self._on_clear, accent=True)
-        self._add_action_button("📷 AI 生成", "generate")
-        layout.addSpacing(8)
-        layout.addStretch()
-
-        # 当前颜色指示
-        self._color_row = QLabel("当前颜色: 黑色")
-        self._color_row.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; padding: 4px 0;")
-        self._color_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._color_row)
-
-        self._color_indicator = QLabel("■")
-        self._color_indicator.setFixedSize(20, 20)
-        self._color_indicator.setStyleSheet(
-            f"color: {ACCENT}; font-size: 18px; font-weight: bold;"
+        geometric_words = ("圆", "圆圈", "矩形", "正方形", "方形", "三角形", "五角星", "星形", "直线")
+        scene_words = (
+            "树", "苹果", "河", "小溪", "溪流", "鱼", "太阳", "云", "山", "草",
+            "花", "房子", "小屋", "桥", "路", "天空", "鸟", "人物", "动物",
+            "森林", "风景", "背景", "水面", "湖", "船",
         )
-        self._color_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._color_indicator, alignment=Qt.AlignmentFlag.AlignCenter)
+        action_words = (
+            "画", "生成", "添加", "加", "补", "长", "放", "有", "涂", "上色",
+            "改成", "变成", "填充", "丰富", "完善",
+        )
+        relation_words = ("在", "上", "下", "旁边", "里面", "左边", "右边", "下面", "上面")
 
-    def _add_tool_button(self, text: str, tool: str, icon: str = "") -> None:
-        btn = self._make_button(f"{icon} {text}", self._on_tool, tool)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
+        if any(word in stripped for word in scene_words):
+            return any(word in stripped for word in action_words + relation_words)
 
-    def _add_shape_button(self, text: str, command: str) -> None:
-        btn = self._make_button(text, self._on_shape, command)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
+        if any(word in stripped for word in geometric_words):
+            return False
 
-    def _add_action_button(self, text: str, payload, accent: bool = False) -> None:
-        btn = self._make_button(text, self._on_action, payload, accent)
-        layout = self.layout()
-        if layout:
-            layout.addWidget(btn)
+        return self.engine.is_i2i_mode() and any(word in stripped for word in action_words)
 
-    def _make_button(self, text: str, handler, payload=None, accent: bool = False) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setFixedHeight(36)
-        btn.setFixedWidth(160)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(self._btn_style(accent))
+    def _is_i2i_extension(self, text: str, canvas_ops) -> bool:
+        """判断是否是扩展画面的命令（而非独立的新元素）。
 
-        # 用 lambda 捕获，避免 clicked(bool) 信号传 bool 导致类型错误
-        def _wrap(_=None, _h=handler, _p=payload, _b=btn):
-            _h(_p)
-            # 工具按钮高亮
-            if _p in ("pen", "eraser", "line"):
-                _b.setStyleSheet(self._btn_style(True))
-        btn.clicked.connect(_wrap)
-        return btn
-
-    def _btn_style(self, active: bool = False) -> str:
-        bg = ACCENT if active else BG_HOVER
-        text_color = "#FFFFFF" if active else TEXT_PRIMARY
-        return f"""
-            QPushButton {{
-                background-color: {bg};
-                color: {text_color};
-                border: none;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-                padding: 4px 10px;
-            }}
-            QPushButton:hover {{
-                background-color: {ACCENT_PRESSED};
-            }}
-            QPushButton:pressed {{
-                background-color: {ACCENT};
-            }}
+        扩展命令的特征：
+        - 包含参照物：在...上/下/旁边
+        - 包含追加动词：加、补、再、也
+        - 包含方向/位置：上、下、左边、右边、里面
+        - 不包含"生成/来一张"等独立生成动词
         """
+        # 排除独立生成命令
+        if re.search(r"(生成|来一|来张|来幅|画一幅|画一张|画一张)", text):
+            return False
 
-    def _on_tool(self, tool: str) -> None:
-        self.tool_selected.emit(tool)
+        # 包含参照物或追加动词 → I2I
+        extension_keywords = [
+            "在", "加", "补", "再", "也", "然后",
+            "上", "下", "旁边", "里面", "边",
+            "旁边", "下面", "上面", "左边", "右边",
+        ]
+        return any(kw in text for kw in extension_keywords)
 
-    def _on_shape(self, command: str) -> None:
-        self.tool_selected.emit(f"shape:{command}")
-
-    def _on_undo(self) -> None:
-        self.action_undo.emit()
-
-    def _on_clear(self) -> None:
-        self.action_clear.emit()
-
-    def _on_action(self, payload) -> None:
-        if payload == "generate":
-            self.tool_selected.emit("ai:生成一幅美丽的风景画")
-
-    def set_current_color(self, hex_color: str) -> None:
-        name = color_map.get_color(hex_color)
-        self._color_row.setText(f"当前颜色: {name}")
-        self._color_indicator.setStyleSheet(
-            f"background-color: {hex_color}; "
-            f"border: 2px solid {TEXT_DIM}; "
-            f"border-radius: 4px; "
-            f"font-size: 0px;"
+    def _is_immediate_system_command(self, operations) -> bool:
+        return bool(operations) and all(
+            getattr(op, "op_type", None) in (
+                OperationType.CLEAR,
+                OperationType.UNDO,
+                OperationType.REDO,
+            )
+            for op in operations
         )
 
+    def _requires_edit_target(self, operations) -> bool:
+        return any(isinstance(op, (
+            MoveSelectedOperation,
+            RecolorSelectedOperation,
+            ScaleSelectedOperation,
+            SelectLastOperation,
+            DeleteSelectedOperation,
+            LabelSelectedOperation,
+        )) for op in operations)
 
-# ── 颜色面板 ─────────────────────────────────────────────────
+    def _on_repaint(self) -> None:
+        self.canvas.clear()
+        self.canvas.set_background_color(self.engine.background_color)
+        for op in self.engine.get_history():
+            if self._is_renderable_operation(op):
+                self.canvas._operations.append(op)
+        self.canvas.set_selected_operation(self.engine.selected_operation_id)
+        self.canvas.update()
+        self._refresh_latest_picture_snapshot()
+        self.voice_panel.clear_ai_loading()
 
-class ColorPalette(QWidget):
-    """底部颜色面板，30+ 颜色可点击。"""
+    def _on_canvas_i2i_finished(self, text: str, success: bool) -> None:
+        if success:
+            self._record_picture_step(text)
+            self.voice_panel.show_action(f"已更新整幅画：{text}")
+        else:
+            self.voice_panel.show_error("AI 生成失败，请稍后重试")
+        self.voice_panel.clear_ai_loading()
 
-    color_selected = pyqtSignal(str, str)  # hex, name
+    def _on_timeline_click(self, item) -> None:
+        """点击时间线某项，撤销到该步。"""
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self._picture_snapshots):
+            return
+        self._rollback_to_picture_index(index)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._setup_ui()
+    def _try_rollback_to_step(self, text: str) -> bool:
+        """识别“撤销到第二步/回到第2步”并回退作品步骤。"""
+        if not any(word in text for word in ("撤销到", "回到", "退回", "返回")):
+            return False
+        match = re.search(r"第?([一二三四五六七八九十\d]+)步", text)
+        if not match:
+            return False
+        step = self._parse_step_number(match.group(1))
+        if step is None or step < 1 or step > len(self._picture_snapshots):
+            self.voice_panel.show_error("没有找到对应的作品步骤")
+            return True
+        self._rollback_to_picture_index(step - 1)
+        self.voice_panel.show_action(f"已回退到第 {step} 步")
+        return True
 
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+    def _parse_step_number(self, value: str) -> Optional[int]:
+        if value.isdigit():
+            return int(value)
+        numerals = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        }
+        return numerals.get(value)
 
-        title = QLabel("颜色选择")
-        title.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {TEXT_SECONDARY}; padding: 0;")
-        layout.addWidget(title)
+    def _rollback_to_picture_index(self, index: int) -> None:
+        """回退到右侧作品快照对应的历史长度。"""
+        target_snapshot = self._picture_snapshots[index]
+        target_history_len = target_snapshot[2] if len(target_snapshot) >= 3 else index + 1
+        while len(self.engine.get_history()) > target_history_len:
+            self.engine.undo()
+        self._picture_snapshots = self._picture_snapshots[:index + 1]
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setMaximumHeight(80)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollBar:horizontal {{
-                background: {BG_CARD};
-                height: 6px;
-                border-radius: 3px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {BORDER_LIGHT};
-                border-radius: 3px;
-            }}
-        """)
+    def _is_renderable_operation(self, operation) -> bool:
+        return isinstance(operation, (
+            AIImageOperation,
+            CircleOperation,
+            FreehandOperation,
+            LineDrawOperation,
+            RectangleOperation,
+            StarOperation,
+            StrokeGroupOperation,
+            TriangleOperation,
+        ))
 
-        self._color_grid = QWidget()
-        grid_layout = QHBoxLayout(self._color_grid)
-        grid_layout.setContentsMargins(4, 2, 4, 2)
-        grid_layout.setSpacing(3)
+    def _record_picture_step(self, text: str) -> None:
+        """把当前整幅画作为一个创作步骤记录到右侧。"""
+        if not any(self._is_renderable_operation(op) for op in self.engine.get_history()):
+            return
+        label = f"第 {len(self._picture_snapshots) + 1} 步：{text}"
+        snapshot = self.canvas.render_snapshot(self._renderable_history())
+        self._picture_snapshots.append((label, snapshot, len(self.engine.get_history())))
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
 
-        self._buttons: List[tuple] = []  # (btn, hex, name)
+    def _refresh_latest_picture_snapshot(self) -> None:
+        """AI 图片异步生成后，用最新画面刷新最后一步缩略图。"""
+        if not self._picture_snapshots:
+            return
+        label = self._picture_snapshots[-1][0]
+        history_len = self._picture_snapshots[-1][2] if len(self._picture_snapshots[-1]) >= 3 else len(self.engine.get_history())
+        self._picture_snapshots[-1] = (
+            label,
+            self.canvas.render_snapshot(self._renderable_history()),
+            history_len,
+        )
+        self.timeline_panel.update_snapshots(self._picture_snapshots)
 
-        for name, hex_color in color_map.COLOR_MAP.items():
-            btn = QPushButton()
-            btn.setFixedSize(28, 28)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(name)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {hex_color};
-                    border: 2px solid {BORDER_LIGHT};
-                    border-radius: 14px;
-                }}
-                QPushButton:hover {{
-                    border-color: {ACCENT};
-                }}
-                QPushButton:pressed {{
-                    border-color: #FFFFFF;
-                }}
-            """)
-            btn.clicked.connect(lambda _=None, _hex=hex_color, _name=name: self._on_color(_hex, _name))
-            grid_layout.addWidget(btn)
-            self._buttons.append((btn, hex_color, name))
+    def _clear_picture_snapshots(self) -> None:
+        self._picture_snapshots.clear()
+        self.timeline_panel.clear()
 
-        scroll.setWidget(self._color_grid)
-        layout.addWidget(scroll)
-
-    def _on_color(self, hex_color: str, name: str) -> None:
-        self.color_selected.emit(hex_color, name)
+    def _renderable_history(self):
+        return [op for op in self.engine.get_history() if self._is_renderable_operation(op)]
 
 
 if __name__ == "__main__":
     import sys
     app = QApplication(sys.argv)
+    app.setApplicationName("语音绘图")
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

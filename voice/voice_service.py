@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import math
+import re
+import threading
 import time
 from typing import Optional
 
@@ -26,9 +28,15 @@ from voice.audio_buffer import AudioBuffer
 logger = logging.getLogger(__name__)
 
 
+class _UnstableTranscriptionError(Exception):
+    """Whisper 输出明显不稳定时用于中断展示和执行。"""
+
+
 class VoiceServiceSignals(QObject):
     """语音服务信号。"""
 
+    recognition_started = pyqtSignal()
+    partial_transcription = pyqtSignal(str)
     transcription_ready = pyqtSignal(str, float)
     listening_started = pyqtSignal()
     listening_stopped = pyqtSignal()
@@ -56,9 +64,13 @@ class VoiceService(QObject):
         self._base_model: Optional[whisper.Whisper] = None
         self._fallback_model: Optional[whisper.Whisper] = None
 
-        # 防抖: 两次识别之间至少间隔 2 秒
+        # 防抖: 两次识别之间保留短间隔，避免吞掉连续语音指令
         self._last_transcribe_time = 0.0
-        self._COOLDOWN = 2.0
+        self._COOLDOWN = 0.35
+        self._stream_char_interval = 0.025
+        self._transcribe_lock = threading.Lock()
+        self._is_transcribing = False
+        self._pending_audio: Optional[np.ndarray] = None
 
         self.audio_buffer.audio_ready.connect(self._on_audio_ready)
         self.audio_buffer.error.connect(self.signals.error)
@@ -122,17 +134,58 @@ class VoiceService(QObject):
         if len(trimmed) > max_len:
             trimmed = trimmed[:max_len]
 
+        with self._transcribe_lock:
+            if self._is_transcribing:
+                self._pending_audio = trimmed
+                logger.debug("识别任务仍在运行，保留最新语音片段")
+                return
+            self._is_transcribing = True
+
+        worker = threading.Thread(
+            target=self._transcribe_worker,
+            args=(trimmed,),
+            daemon=True,
+        )
+        worker.start()
+
+    def _transcribe_worker(self, audio: np.ndarray) -> None:
+        """后台线程执行 Whisper，避免阻塞 Qt 主线程。"""
         try:
-            text, confidence = self._transcribe(trimmed)
+            self.signals.recognition_started.emit()
+            text, confidence = self._transcribe(audio)
             if text:
                 self._last_transcribe_time = time.monotonic()
                 logger.info("识别: \"%s\" (置信度: %.2f)", text, confidence)
+                self._emit_partial_transcription(text)
                 self.signals.transcription_ready.emit(text, confidence)
             else:
-                logger.debug("未识别到语音 (trimmed: %.2fs)", len(trimmed) / 16000)
+                logger.debug("未识别到语音 (trimmed: %.2fs)", len(audio) / 16000)
+        except _UnstableTranscriptionError:
+            logger.warning("识别结果不稳定，已丢弃")
+            self.signals.error.emit("语音识别结果不稳定，请再说一遍")
         except Exception as e:
             logger.error("Whisper 推理失败: %s", e)
             self.signals.error.emit(f"语音识别失败: {e}")
+        finally:
+            next_audio: Optional[np.ndarray] = None
+            with self._transcribe_lock:
+                if self._pending_audio is not None:
+                    next_audio = self._pending_audio
+                    self._pending_audio = None
+                else:
+                    self._is_transcribing = False
+
+            if next_audio is not None:
+                self._transcribe_worker(next_audio)
+
+    def _emit_partial_transcription(self, text: str) -> None:
+        """逐字发出识别文本前缀，供界面实时展示。"""
+        current = ""
+        for char in text:
+            current += char
+            self.signals.partial_transcription.emit(current)
+            if self._stream_char_interval > 0:
+                time.sleep(self._stream_char_interval)
 
     def _transcribe(self, audio: np.ndarray) -> tuple[str, float]:
         """使用主模型识别，置信度低时回退。
@@ -141,19 +194,32 @@ class VoiceService(QObject):
             (text, confidence)
         """
         device = "cuda" if config.WHISPER_USE_CUDA else "cpu"
-        prompt = "绘图指令 颜色 形状 工具 画笔 橡皮 线条 圆 矩形 撤销 清空 保存 红色 蓝色"
+        prompt = (
+            "这是中文语音绘图指令。常见命令包括："
+            "开始语音识别，停止语音识别，撤销，重做，清空；"
+            "用红色画笔，在中间画一个圆圈，在左上角画一个空心圆，"
+            "右下角画蓝色矩形，画三角形，画星形，画直线，"
+            "颜色包括红色、蓝色、绿色、黄色、黑色、白色。"
+        )
 
         result = self._base_model.transcribe(
             audio,
             language="zh",
             fp16=False,
             task="transcribe",
+            temperature=0.0,
+            condition_on_previous_text=False,
             initial_prompt=prompt,
         )
-        text = result.get("text", "").strip()
+        text = self._clean_transcription(result.get("text", ""))
+        if self._is_unstable_transcription(text, result):
+            raise _UnstableTranscriptionError()
         confidence = self._estimate_confidence(result, text)
 
         if confidence < config.WHISPER_FALLBACK_THRESHOLD:
+            if confidence >= 0.45 and self._looks_like_drawing_command(text):
+                return text, confidence
+
             # 回退到更大模型
             if self._fallback_model is None:
                 try:
@@ -165,18 +231,122 @@ class VoiceService(QObject):
                     logger.error("回退模型加载失败: %s", e)
                     return text, confidence
 
-            result2 = self._fallback_model.transcribe(
-                audio,
-                language="zh",
-                fp16=False,
-                initial_prompt=prompt,
-            )
-            text2 = result2.get("text", "").strip()
-            conf2 = self._estimate_confidence(result2, text2)
-            if conf2 > confidence and text2:
-                return text2, conf2
+            try:
+                result2 = self._fallback_model.transcribe(
+                    audio,
+                    language="zh",
+                    fp16=False,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt=prompt,
+                )
+                text2 = self._clean_transcription(result2.get("text", ""))
+                if self._is_unstable_transcription(text2, result2):
+                    # fallback 也产生不稳定结果，回退到 tiny 的结果
+                    logger.info("回退模型结果不稳定，使用主模型结果: \"%s\"", text)
+                    return text, confidence
+
+                conf2 = self._estimate_confidence(result2, text2)
+                if conf2 > confidence and text2:
+                    return text2, conf2
+            except _UnstableTranscriptionError:
+                # 异常路径也回退到 tiny
+                logger.info("回退模型异常，使用主模型结果: \"%s\"", text)
 
         return text, confidence
+
+    # 语音常见同音/近音纠错映射 — Whisper 误识别时兜底
+    # 按长度降序排列，优先匹配长词
+    _PHONETIC_FIXES: dict[str, str] = {
+        # 乌龟系列
+        "污规": "乌龟", "乌归": "乌龟", "污龟": "乌龟",
+        "污规的": "乌龟的", "污规脚": "乌龟脚", "污规下面": "乌龟下面",
+        # 树/草系列
+        "站速": "在树", "站树": "在树", "在书": "在树",
+        "一颗": "一棵", "一科": "一棵",
+        # 河流/小溪系列
+        "合流": "河流", "河留": "河流", "荷流": "河流",
+        "小锡": "小溪", "小西": "小溪", "小希": "小溪", "小惜": "小溪",
+        "小盒": "小河", "小何": "小河",
+        # 动物系列
+        "猫告": "猫", "狗告": "狗", "小老鬼": "小老鼠",
+        "小老几": "小老鼠", "小劳资": "小老鼠",
+        "小劳机": "小老鼠", "小捞汁": "小老鼠",
+        # 通用口语变体
+        "画一个": "画一个", "画个": "画个",
+        "画一只": "画一只", "画只": "画只",
+        "画一只": "画一只", "画头": "画头",
+        "画一幅": "画一幅", "画幅": "画幅",
+        "画一张": "画一张", "画张": "画张",
+        "画一条": "画一条", "画条": "画条",
+        # 颜色口语
+        "粉红色": "粉红色", "玫红色": "玫红色",
+        "草绿色": "草绿色", "墨绿色": "墨绿色",
+        "天蓝色": "天蓝色", "湖蓝色": "湖蓝色",
+        # 形状口语
+        "圈圈": "圆圈", "圈圈圆": "圆圈",
+        "方框框": "矩形", "正方体": "正方形",
+        "长方体": "长方形",
+        # 系统命令口语
+        "帮帮我": "帮我", "帮我用": "帮我用",
+        "帮我画": "帮我画", "帮我把": "帮我把",
+        "帮我把那个": "帮我把那个",
+        "帮我把这个": "帮我把这个",
+        "帮我把它": "帮我把它",
+        # 其他常见误识
+        "的": "的", "地": "的", "得": "的",
+    }
+
+    def _clean_transcription(self, text: str) -> str:
+        """清理 Whisper 偶发的非法替换字符、多余空白和同音误识。"""
+        cleaned = text.replace("\ufffd", "")
+        cleaned = re.sub(r"\s+", "", cleaned)
+        cleaned = cleaned.strip()
+
+        # 同音词纠错（精确匹配 → 替换）
+        for wrong, correct in self._PHONETIC_FIXES.items():
+            if cleaned == wrong or wrong in cleaned:
+                cleaned = cleaned.replace(wrong, correct)
+
+        return cleaned.strip()
+
+    def _is_unstable_transcription(self, text: str, result: dict) -> bool:
+        """识别明显重复幻听，避免把垃圾文本展示或执行。"""
+        if not text:
+            return False
+
+        if len(text) >= 12 and len(set(text)) <= 2:
+            return True
+
+        for seg in result.get("segments", []):
+            ratio = seg.get("compression_ratio")
+            # 缩短文本（<=15字）放宽阈值，避免误杀简短有效语音
+            if ratio is not None and ratio >= 3.0 and len(text) > 15:
+                return True
+
+        return self._has_repeating_phrase(text)
+
+    def _has_repeating_phrase(self, text: str) -> bool:
+        """检测“画一边画一边...”这类短语循环幻听。"""
+        if len(text) < 16:
+            return False
+
+        for size in range(1, min(8, len(text) // 3) + 1):
+            chunk = text[:size]
+            repeated = chunk * (len(text) // size)
+            remainder = text[len(repeated):]
+            matched = len(repeated) if text.startswith(repeated) else 0
+            if matched + len(remainder) >= len(text) * 0.8 and text.count(chunk) >= 4:
+                return True
+        return False
+
+    def _looks_like_drawing_command(self, text: str) -> bool:
+        """低置信但像绘图指令时优先响应，避免首次加载 slow fallback。"""
+        keywords = (
+            "画", "圆", "圈", "矩形", "方形", "三角", "星", "线",
+            "红", "蓝", "绿", "黄", "黑", "白", "清空", "撤销",
+        )
+        return any(keyword in text for keyword in keywords)
 
     def _estimate_confidence(self, result: dict, text: str) -> float:
         """从 Whisper 结果估算置信度。"""

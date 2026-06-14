@@ -1,206 +1,266 @@
-"""语音反馈面板 — 增强版。
+"""语音反馈面板 — 极简留白风格。
 
-大字显示识别到的语音文字 + 置信度进度条 + 解析动作确认。
-新增: 实时音量柱状图可视化，让你能看到麦克风是否收到声音。
+显示:
+- 麦克风状态指示灯（● 圆形呼吸动画）
+- 识别文字（大字居中）
+- 置信度进度条
+- 语音按钮（开始/停止）
+
 引用:
-- `voice/voice_service.py` — VoiceService.signals.transcription_ready 信号
+- `voice/voice_service.py` — VoiceService.signals.*
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QPainter, QColor, QLinearGradient
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 
 class VoiceFeedbackPanel(QWidget):
-    """增强版语音反馈面板。"""
+    """极简语音反馈面板。"""
 
-    _BG = """
-        QWidget {
-            background-color: #2A2A3C;
-            border-radius: 12px;
-        }
-    """
+    execute_requested = pyqtSignal(str)
+    listen_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
 
+        self._listening = False
+        self._last_text = ""
+
+        self._reset_timer = QTimer(self)
+        self._reset_timer.setSingleShot(True)
+        self._reset_timer.timeout.connect(self._reset_text)
+
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(600)
+        self._pulse_timer.timeout.connect(self._pulse_opacity)
+        self._pulse_val = 1.0
+
         self._setup_ui()
-        self._reset_timeout = QTimer(self)
-        self._reset_timeout.setSingleShot(True)
-        self._reset_timeout.timeout.connect(self._reset_text)
-        self._fade_timer = QTimer(self)
-        self._fade_timer.setSingleShot(True)
-        self._fade_timer.timeout.connect(self._fade_out)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+        self.setStyleSheet("background: transparent;")
 
-        # --- 音量指示器 ---
-        vol_layout = QVBoxLayout()
-        vol_title = QLabel("🎤 麦克风音量")
-        vol_title.setFont(QFont("Microsoft YaHei", 11))
-        vol_title.setStyleSheet("color: #AAAAAA; padding: 0;")
-        vol_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vol_layout.addWidget(vol_title)
+        # ── 顶部: 麦克风状态 + 识别文字 ──
+        top = QVBoxLayout()
+        top.setSpacing(8)
 
-        # 音量条容器
-        self.volume_frame = QWidget()
-        self.volume_frame.setFixedHeight(60)
-        self.volume_frame.setStyleSheet("background: transparent;")
-        vol_layout.addWidget(self.volume_frame)
+        # 状态行: 指示灯 + 文字
+        status_row = QHBoxLayout()
+        status_row.setSpacing(12)
 
-        volume_h = QHBoxLayout(self.volume_frame)
-        volume_h.setContentsMargins(10, 10, 10, 5)
-        volume_h.setSpacing(3)
+        # 麦克风指示灯
+        self.status_indicator = QLabel("●")
+        self.status_indicator.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        self.status_indicator.setStyleSheet("color: #D2D2D7;")
+        self.status_indicator.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status_indicator, alignment=Qt.AlignmentFlag.AlignVCenter)
+        status_row.addStretch()
 
-        # 15 个音量条
-        self.vol_bars: list[QLabel] = []
-        for i in range(15):
-            bar = QLabel()
-            bar.setFixedSize(20, 30)
-            bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            bar.setStyleSheet(self._vol_bar_style("#555555", 10))
-            volume_h.addWidget(bar)
-            self.vol_bars.append(bar)
-
-        volume_h.addStretch()
-
-        layout.addLayout(vol_layout)
-        layout.addSpacing(4)
-
-        # --- 识别文字 ---
+        # 识别文字
         self.text_label = QLabel("请说话...")
+        self.text_label.setFont(QFont("Microsoft YaHei", 22, QFont.Weight.Bold))
+        self.text_label.setStyleSheet("color: #1D1D1F;")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = QFont("Microsoft YaHei", 24, QFont.Weight.Bold)
-        self.text_label.setFont(font)
-        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
-        layout.addWidget(self.text_label)
+        self.text_label.setWordWrap(True)
+        status_row.addWidget(self.text_label)
 
-        # --- 置信度进度条 ---
+        top.addLayout(status_row)
+        top.addStretch()
+
+        # 置信度进度条
         self.confidence_bar = QProgressBar()
         self.confidence_bar.setRange(0, 100)
         self.confidence_bar.setValue(0)
+        self.confidence_bar.setFixedHeight(6)
         self.confidence_bar.setTextVisible(False)
-        self.confidence_bar.setFixedHeight(10)
-        self.confidence_bar.setStyleSheet(self._progress_style("#00AA00"))
-        layout.addWidget(self.confidence_bar)
+        self.confidence_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #E8E8ED;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background-color: #0071E3;
+                border-radius: 3px;
+            }
+        """)
+        top.addWidget(self.confidence_bar, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # --- 解析动作 ---
+        layout.addLayout(top)
+
+        # 语音按钮
+        self.listen_button = QPushButton("开始语音识别")
+        self.listen_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.listen_button.setFixedHeight(44)
+        self.listen_button.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Medium))
+        self.listen_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0071E3;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 22px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0066D0;
+            }
+            QPushButton:pressed {
+                background-color: #005BB5;
+            }
+            QPushButton:disabled {
+                background-color: #D2D2D7;
+            }
+        """)
+        self.listen_button.clicked.connect(self.listen_requested.emit)
+        layout.addWidget(self.listen_button)
+
+        # 解析动作提示
         self.action_label = QLabel("")
-        font2 = QFont("Microsoft YaHei", 13)
-        self.action_label.setFont(font2)
-        self.action_label.setStyleSheet("color: #AAAAAA; min-height: 20px;")
+        self.action_label.setFont(QFont("Microsoft YaHei", 12))
+        self.action_label.setStyleSheet("color: #86868B;")
         self.action_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.action_label.setFixedHeight(20)
         layout.addWidget(self.action_label)
 
+        layout.addStretch()
+
         self.setLayout(layout)
-        self.setStyleSheet(self._BG)
 
-    # ── 样式 ──────────────────────────────────────────────
-
-    def _vol_bar_style(self, color: str, height: int = 30) -> str:
-        return f"""
-            QLabel {{
-                background-color: {color};
-                border-radius: 3px;
-                min-height: {height}px;
-                max-height: {height}px;
-            }}
-        """
-
-    def _progress_style(self, color: str) -> str:
-        return f"""
-            QProgressBar {{
-                background-color: #1a1a2a;
-                border: none;
-                border-radius: 5px;
-                height: 10px;
-            }}
-            QProgressBar::chunk {{
-                background: QLinearGradient(
-                    x1: 0, y1: 0, x2: 1, y2: 0,
-                    stop: 0 {color},
-                    stop: 1 {color}cc
-                );
-                border-radius: 5px;
-            }}
-        """
-
-    def _update_volume_display(self, rms: float) -> None:
-        """根据 RMS 音量更新柱状图。"""
-        intensity = min(14, int(rms * 100))  # 0-14 格
-        for i, bar in enumerate(self.vol_bars):
-            if i < intensity:
-                if rms > 0.05:
-                    color = "#F87171"   # 高音量红色
-                elif rms > 0.01:
-                    color = "#FBBF24"   # 中音量黄色
-                else:
-                    color = "#4ADE80"   # 低音量绿色
-                bar.setStyleSheet(self._vol_bar_style(color, 10 + i * 2))
-                bar.show()
-            else:
-                bar.setStyleSheet(self._vol_bar_style("#555555", 10))
-                bar.hide()
-
-    # ── 公共 API ──────────────────────────────────────────
+    # ── 状态更新 ──
 
     def show_transcription(self, text: str, confidence: float) -> None:
+        self._last_text = text.strip()
         self.text_label.setText(text)
-        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
+        self.text_label.setStyleSheet("color: #1D1D1F;")
         pct = int(confidence * 100)
         self.confidence_bar.setValue(pct)
+
         if confidence >= 0.8:
-            color = "#4ADE80"
+            self.confidence_bar.setStyleSheet("""
+                QProgressBar {
+                    background-color: #E8E8ED;
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar::chunk {
+                    background-color: #34C759;
+                    border-radius: 3px;
+                }
+            """)
         elif confidence >= 0.6:
-            color = "#FBBF24"
+            self.confidence_bar.setStyleSheet("""
+                QProgressBar {
+                    background-color: #E8E8ED;
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar::chunk {
+                    background-color: #FF9F0A;
+                    border-radius: 3px;
+                }
+            """)
         else:
-            color = "#F87171"
-        self.confidence_bar.setStyleSheet(self._progress_style(color))
-        self._fade_timer.stop()
-        self._fade_timer.start(3000)
+            self.confidence_bar.setStyleSheet("""
+                QProgressBar {
+                    background-color: #E8E8ED;
+                    border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar::chunk {
+                    background-color: #FF453A;
+                    border-radius: 3px;
+                }
+            """)
+
+        self._pulse_timer.stop()
+        self._reset_timer.stop()
+        self._reset_timer.start(4000)
+
+    def show_partial_transcription(self, text: str) -> None:
+        self._last_text = text.strip()
+        self.text_label.setText(text)
+        self.text_label.setStyleSheet("color: #86868B;")
+        self.action_label.setText("正在识别...")
+
+    def show_recognition_started(self) -> None:
+        self.text_label.setText("正在整理文字...")
+        self.text_label.setStyleSheet("color: #86868B;")
+        self.action_label.setText("")
 
     def show_action(self, action_text: str) -> None:
-        self.action_label.setText(f"→ {action_text}")
+        self.action_label.setText(action_text)
+        self._reset_timer.stop()
+        self._reset_timer.start(5000)
 
     def show_error(self, error_text: str) -> None:
-        self.text_label.setText("请再说一遍")
-        self.text_label.setStyleSheet("color: #F87171; min-height: 36px;")
+        if not self._last_text:
+            self.text_label.setText("请再说一遍")
+        self.text_label.setStyleSheet("color: #FF453A;")
         self.confidence_bar.setValue(0)
         self.action_label.setText(f"→ {error_text}")
+        self._pulse_timer.stop()
 
     def show_listening(self) -> None:
         self.text_label.setText("请说话...")
-        self.text_label.setStyleSheet("color: #EAEAEA; min-height: 36px;")
+        self.text_label.setStyleSheet("color: #1D1D1F;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+        self.listen_button.setText("停止语音识别")
+        self.status_indicator.setStyleSheet("color: #34C759;")
+        self._pulse_timer.start()
 
     def show_silence(self) -> None:
-        self.text_label.setText("麦克风未连接")
-        self.text_label.setStyleSheet("color: #777777; min-height: 36px;")
+        self.text_label.setText("语音识别已停止")
+        self.text_label.setStyleSheet("color: #86868B;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
+        self.listen_button.setText("开始语音识别")
+        self.status_indicator.setStyleSheet("color: #D2D2D7;")
+        self._pulse_timer.stop()
 
     def show_volume(self, rms: float) -> None:
-        """显示音量（由 AudioBuffer.volume_changed 连接）。"""
-        self._update_volume_display(rms)
+        """不显示音量柱状图，仅触发呼吸灯。"""
+        if rms > 0.02:
+            self.status_indicator.setStyleSheet("color: #34C759;")
+
+    def show_ai_loading(self, label: str) -> None:
+        """显示 AI 生成中的状态。"""
+        self.action_label.setText(f"正在生成{label}...")
+        self.action_label.setStyleSheet("color: #0071E3;")
+
+    def clear_ai_loading(self) -> None:
+        """清除 AI 生成中的状态。"""
+        if "正在生成" in self.action_label.text():
+            self.action_label.setText("")
+            self.action_label.setStyleSheet("color: #86868B;")
+
+    def _pulse_opacity(self) -> None:
+        self._pulse_val = 1.0 if self._pulse_val < 0.5 else 0.4
+        alpha = int(self._pulse_val * 255)
+        self.status_indicator.setStyleSheet(
+            f"color: rgba(52, 199, 89, {self._pulse_val:.1f});"
+        )
 
     def _reset_text(self) -> None:
-        self.text_label.setText("")
+        self.text_label.setText("请说话...")
+        self.text_label.setStyleSheet("color: #1D1D1F;")
         self.confidence_bar.setValue(0)
         self.action_label.setText("")
 
-    def _fade_out(self) -> None:
-        self.action_label.clear()
+    def set_listening_active(self, active: bool) -> None:
+        self.listen_button.setText("停止语音识别" if active else "开始语音识别")

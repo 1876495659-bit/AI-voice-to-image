@@ -22,7 +22,8 @@
       "Bash(git commit -m 'feat\\(engine\\): 绘图执行引擎 engine/drawing_engine.py *)",
       "Bash(git commit -m 'feat\\(ui\\): 画布渲染组件 ui/canvas_widget.py *)",
       "Bash(git commit -m 'feat\\(parser\\): 颜色映射表 parser/color_map.py *)",
-      "Bash(git commit -m 'feat\\(parser\\): 命令语法规则 parser/command_grammar.py *)"
+      "Bash(git commit -m 'feat\\(parser\\): 命令语法规则 parser/command_grammar.py *)",
+      "Bash(python -c ' *)"
     ]
   }
 }

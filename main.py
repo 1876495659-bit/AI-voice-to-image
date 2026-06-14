@@ -10,6 +10,7 @@
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -22,6 +23,18 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def initialize_voice(window: Any) -> bool:
+    """初始化语音模型，等待用户点击按钮开始监听。"""
+    logger.info("正在初始化语音识别...")
+    if not window.voice_service.initialize():
+        logger.warning("语音识别初始化失败，仍可正常使用绘图功能")
+        window.voice_panel.show_error("语音识别不可用，请检查 whisper 安装")
+        return False
+
+    logger.info("语音识别已就绪，等待用户点击按钮开始监听")
+    return True
 
 
 def main() -> None:
@@ -47,11 +60,8 @@ def main() -> None:
     # 创建并显示主窗口
     window = MainWindow()
 
-    # 初始化语音服务（加载 Whisper 模型）
-    logger.info("正在初始化语音识别...")
-    if not window.voice_service.initialize():
-        logger.warning("语音识别初始化失败，仍可正常使用绘图功能")
-        window.voice_panel.show_error("语音识别不可用，请检查 whisper 安装")
+    # 初始化语音服务（加载 Whisper 模型，麦克风由界面按钮启动）
+    initialize_voice(window)
 
     window.show()
     logger.info("窗口已显示，进入事件循环...")

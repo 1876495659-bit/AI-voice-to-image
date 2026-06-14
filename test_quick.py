@@ -1,47 +1,51 @@
+"""快速冒烟测试。"""
+
+from __future__ import annotations
+
 import sys
-from PyQt6.QtWidgets import QApplication
 
-app = QApplication(sys.argv)
+from PyQt6.QtWidgets import QApplication, QPushButton
 
-from ui.main_window import MainWindow
 from engine.operations import CircleOperation
+from parser.command_parser import ParseResultType
+from ui.main_window import MainWindow
 
+
+app = QApplication.instance() or QApplication(sys.argv)
 win = MainWindow()
-buttons = win.toolbar.findChildren(__import__('PyQt6.QtWidgets', fromlist=['QPushButton']).QtWidgets.QPushButton if False else __import__('PyQt6.QtWidgets', fromlist=['QPushButton']).QPushButton)
+buttons = win.findChildren(QPushButton)
 
 print(f"[1] 组件: OK, 按钮: {len(buttons)}")
+assert len(buttons) == 1
+assert buttons[0].text() in ("开始语音识别", "停止语音识别")
+assert hasattr(win, "canvas_scroll")
+assert not hasattr(win, "toolbar")
 
-# 解析
-from parser.command_parser import ParseResultType
-r = win.parser.parse('画个圆', 0.95)
+r = win.parser.parse("画个圆", 0.95)
 print(f"[2] 解析 '画个圆': {'OK' if r.is_success else 'FAIL'}")
+assert r.is_success
 
-# 引擎
-win.engine.execute(CircleOperation(color='#FF0000', size=3))
+win.engine.execute(CircleOperation(color="#FF0000", size=3))
 print(f"[3] 执行后操作数: {win.canvas.operation_count}")
+assert win.canvas.operation_count == 1
+
 win.engine.undo()
 print(f"[4] 撤销后操作数: {win.canvas.operation_count}")
+assert win.canvas.operation_count == 0
+
 win.engine.redo()
 print(f"[5] 重做后操作数: {win.canvas.operation_count}")
-win.engine.undo()
-print(f"[6] 撤销后操作数: {win.canvas.operation_count}")
+assert win.canvas.operation_count == 1
 
-# 清空
 win.engine.clear()
-print(f"[7] 清空后操作数: {win.canvas.operation_count}")
+print(f"[6] 清空后操作数: {win.canvas.operation_count}")
+assert win.canvas.operation_count == 0
 
-from parser import color_map
-print(f"[8] 颜色映射: 红色={color_map.get_color('红色')}")
-print(f"[9] 色块数: {len(win.color_panel._buttons)}")
-
-win.voice_panel.show_transcription('测试', 0.9)
-print(f"[10] 语音面板: {win.voice_panel.text_label.text()}")
-
-from parser.command_parser import ParseResult
-from engine.operations import CircleOperation as CO
-fake = ParseResult(type=ParseResultType.SUCCESS, operations=[CO()], confidence=0.95, raw_text='测试')
-win.history_panel.add_entry(fake)
-print(f"[11] 历史记录: {win.history_panel.entry_count}")
+command = "帮我用红色画笔 在中间画一个 圆圈"
+win.voice_service.signals.transcription_ready.emit(command, 0.46)
+print(f"[7] 语音执行后操作数: {win.canvas.operation_count}")
+assert win.canvas.operation_count == 1
+assert "CIRCLE" in win.voice_panel.action_label.text()
 
 print("\n=== 全部通过 ===")
-sys.exit(0)
+assert app is not None

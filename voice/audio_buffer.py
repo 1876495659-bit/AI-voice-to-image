@@ -40,10 +40,10 @@ class AudioBuffer(QObject):
     error = pyqtSignal(str)
 
     # ── 可调参数 ────────────────────────────────────────
-    SILENCE_DURATION: float = 0.5       # 静音多久算语音结束
-    MIN_VOICE_DURATION: float = 0.3     # 最短语音时长 (秒)
-    BLOCK_DURATION: float = 0.3         # 回调块大小 (秒)
-    NEAR_SILENCE_FACTOR: float = 0.3    # 接近静音倍率 (rms < threshold × factor)
+    SILENCE_DURATION: float = 0.35      # 静音多久算语音结束
+    MIN_VOICE_DURATION: float = 0.25    # 最短语音时长 (秒)
+    BLOCK_DURATION: float = 0.15        # 回调块大小 (秒)
+    NEAR_SILENCE_FACTOR: float = 0.85   # 结束语音倍率 (rms < threshold × factor)
 
     def __init__(self,
                  sample_rate: int = config.AUDIO_SAMPLE_RATE,
@@ -248,9 +248,6 @@ class AudioBuffer(QObject):
     def _audio_callback(self, indata: np.ndarray, frames: int,
                         time_info, status: sd.CallbackFlags) -> None:
         """后台线程: 采集 → 重采样 → VAD。"""
-        if status:
-            return
-
         audio = np.mean(indata, axis=1).astype(np.float32) if indata.ndim > 1 else indata
         rms = float(np.sqrt(np.mean(audio ** 2)))
 

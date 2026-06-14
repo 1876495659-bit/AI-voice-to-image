@@ -88,6 +88,7 @@ tests = [
     ('大小 10', ParseResultType.SUCCESS, ['SIZE']),
     ('生成一幅日落海景', ParseResultType.SUCCESS, ['AI_IMAGE']),
     ('用红色画笔画个圆', ParseResultType.SUCCESS, ['COLOR', 'PEN', 'CIRCLE']),
+    ('用红笔画一个圆圈', ParseResultType.SUCCESS, ['COLOR', 'PEN', 'CIRCLE']),
     ('', ParseResultType.REJECT, []),
 ]
 
@@ -97,7 +98,7 @@ for text, expected_type, expected_ops in tests:
     op_names = [o.op_type.name for o in r.operations]
     assert op_names == expected_ops, f'FAIL: "{text}" ops={op_names} expected={expected_ops}'
     print(f"  OK: \"{text}\" -> {op_names}")
-print("[3] 命令解析 13/13 OK")
+print(f"[3] 命令解析 {len(tests)}/{len(tests)} OK")
 
 # ── 3. 颜色映射测试 ──────────────────────────
 from parser import color_map
